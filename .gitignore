@@ -5,6 +5,7 @@ reports/
 cache/
 logs/
 .env
+.idea/
 __pycache__/
 .venv/
 .mypy_cache/
