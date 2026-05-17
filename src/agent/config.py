@@ -98,8 +98,19 @@ class RSSFeedsConfig(BaseModel):
             "https://huggingface.co/blog/feed.xml",
             "https://deepmind.google/blog/rss.xml",
             "https://openai.com/blog/rss.xml",
+            "https://www.reddit.com/r/LocalLLaMA/hot/.rss",
+            "https://www.reddit.com/r/MachineLearning/top/.rss?t=week",
+            "https://www.reddit.com/r/OpenAI/hot/.rss",
+            "https://www.reddit.com/r/LanguageTechnology/hot/.rss",
         ]
     )
+
+
+class RedditConfig(BaseModel):
+    subreddits: list[str] = Field(
+        default=["LocalLLaMA", "MachineLearning", "artificial", "OpenAI"]
+    )
+    feed_type: str = Field(default="hot")
 
 
 class RetrieverConfig(BaseModel):
@@ -108,6 +119,7 @@ class RetrieverConfig(BaseModel):
         default=["arxiv", "semantic_scholar", "wikipedia", "hackernews", "rss", "duckduckgo"]
     )
     rss_feeds: RSSFeedsConfig = Field(default_factory=RSSFeedsConfig)
+    reddit: RedditConfig = Field(default_factory=RedditConfig)
 
 
 class ExtractorConfig(BaseModel):

@@ -21,7 +21,10 @@ from agent.retrievers import (
     ArxivRetriever,
     BaseRetriever,
     DuckDuckGoRetriever,
+    GitHubSearchRetriever,
+    GitHubTrendingRetriever,
     HackerNewsRetriever,
+    RedditRetriever,
     RSSRetriever,
     SemanticScholarRetriever,
     WikipediaRetriever,
@@ -60,19 +63,43 @@ class Pipeline:
             "hackernews": HackerNewsRetriever,
             "rss": RSSRetriever,
             "duckduckgo": DuckDuckGoRetriever,
+            "github_search": GitHubSearchRetriever,
+            "github_trending": GitHubTrendingRetriever,
+            "reddit": RedditRetriever,
         }
         retrievers: list[BaseRetriever] = []
         for name in self.config.retrievers.enabled:
             cls = registry.get(name)
             if cls is not None:
-                if name == "rss":
+                if name in ("rss", "reddit"):
                     retrievers.append(cls(self.config))
                 else:
                     retrievers.append(cls())
         return retrievers
 
+    SOFTWARE_KEYWORDS = {
+        "software", "code", "library", "framework", "api", "sdk", "tool",
+        "cli", "implementation", "implement", "build", "docker", "kubernetes",
+        "package", "repository", "repo", "npm", "pip", "cargo", "pypi",
+        "programming", "language", "compiler", "debugger", "plugin",
+        "extension", "middleware", "backend", "frontend", "database", "orm",
+        "rest", "graphql", "websocket", "deploy", "devops", "ci/cd",
+    }
+
+    SOFTWARE_PRIORITY_SOURCES = {"github_search", "github_trending", "hackernews", "reddit"}
+
+    @staticmethod
+    def _is_software_query(query: str) -> bool:
+        q_lower = query.lower()
+        return any(kw in q_lower for kw in Pipeline.SOFTWARE_KEYWORDS)
+
     def _active_retrievers(self, decision: RouterDecision) -> list[BaseRetriever]:
-        return [r for r in self.retrievers if decision.mode in r.supports_modes]
+        active = [r for r in self.retrievers if decision.mode in r.supports_modes]
+        if self._is_software_query(decision.query):
+            for r in self.retrievers:
+                if r.name in self.SOFTWARE_PRIORITY_SOURCES and r not in active:
+                    active.insert(0, r)
+        return active
 
     async def run(self, query_str: str) -> ResearchReport:
         t0 = time.perf_counter()

@@ -71,9 +71,11 @@ def run(
 
     async def _run():
         await file_logger.start()
+        cache: AsyncCache | None = None
         try:
             await validate_connectivity(cfg)
             pipeline = Pipeline(cfg)
+            cache = pipeline.cache
             report = await pipeline.run(query)
 
             console.print()
@@ -125,6 +127,8 @@ def run(
         except asyncio.CancelledError:
             console.print("\n[yellow]Operation cancelled[/yellow]")
         finally:
+            if cache is not None:
+                await cache.close()
             await file_logger.stop()
 
     try:
@@ -157,6 +161,7 @@ def cache_clear():
     async def _clear():
         cache = AsyncCache(cfg)
         await cache.clear()
+        await cache.close()
         console.print("[green]✔ Cache cleared[/green]")
 
     asyncio.run(_clear())
@@ -169,10 +174,13 @@ def cache_stats():
 
     async def _stats():
         cache = AsyncCache(cfg)
-        stats = await cache.stats()
-        console.print(Panel.fit("[bold]Cache Statistics[/bold]"))
-        console.print(f"  L1 entries (chunks): {stats['l1_entries']}")
-        console.print(f"  L2 entries (reports): {stats['l2_entries']}")
+        try:
+            stats = await cache.stats()
+            console.print(Panel.fit("[bold]Cache Statistics[/bold]"))
+            console.print(f"  L1 entries (chunks): {stats['l1_entries']}")
+            console.print(f"  L2 entries (reports): {stats['l2_entries']}")
+        finally:
+            await cache.close()
 
     asyncio.run(_stats())
 
