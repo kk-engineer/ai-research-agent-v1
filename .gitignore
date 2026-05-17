@@ -1,0 +1,15 @@
+config.toml
+config.example.toml
+models/
+reports/
+cache/
+logs/
+.env
+__pycache__/
+.venv/
+.mypy_cache/
+.ruff_cache/
+dist/
+*.gguf
+*.egg-info/
+.DS_Store
