@@ -13,7 +13,7 @@ from agent.reranker.scorer import authority_score, freshness_score, length_score
 class ServerReranker(BaseReranker):
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self._base_url = config.reranker.base_url.rstrip("/")
+        self._base_url = config.reranker.base_url
         self._client = httpx.AsyncClient(timeout=30.0)
 
     async def rank(

@@ -14,7 +14,7 @@ PROVIDER_API_KEY_MAP: dict[str, str] = {
     "nvidia": "nvidia_api_key",
     "gemini": "gemini_api_key",
     "openrouter": "openrouter_api_key",
-    "huggingface": "huggingface_api_key",
+    "huggingface": "hf_api_key",
     "deepseek": "deepseek_api_key",
     "openai": "openai_api_key",
     "anthropic": "anthropic_api_key",

@@ -5,7 +5,7 @@ from agent.embeddings.base import BaseEmbedder
 
 class ServerEmbedder(BaseEmbedder):
     def __init__(self, base_url: str, model_name: str) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = base_url
         self._model_name = model_name
         self._client = httpx.AsyncClient(timeout=30.0)
 

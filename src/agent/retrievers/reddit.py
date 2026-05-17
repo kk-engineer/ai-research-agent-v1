@@ -1,6 +1,7 @@
 import asyncio
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 from httpx import AsyncClient
 
@@ -38,10 +39,29 @@ class RedditRetriever(BaseRetriever):
         "Sec-Fetch-Site": "same-origin",
     }
 
+    _INTENT_KEYWORDS: dict[str, list[str]] = {
+        "rising": ["trending", "trends", "rising", "hot right now", "gaining"],
+        "new": ["latest", "newest", "recent", "just released", "new today", "fresh"],
+        "top": ["best", "top", "greatest", "most popular", "highest rated"],
+        "hot": [
+            "discussion", "discussions", "talk", "community",
+            "thoughts", "opinion", "what do you think",
+        ],
+    }
+
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self.subreddits = config.retrievers.reddit.subreddits
-        self.feed_type = config.retrievers.reddit.feed_type
+        self._default_feed = config.retrievers.reddit.feed_type
+
+    def _infer_feed_type(self, queries: list[str]) -> str:
+        text = " ".join(queries).lower()
+        scores: dict[str, int] = {}
+        for feed_type, keywords in self._INTENT_KEYWORDS.items():
+            scores[feed_type] = sum(1 for kw in keywords if kw in text)
+        if not any(scores.values()):
+            return self._default_feed
+        return max(scores, key=lambda k: scores[k])
 
     async def fetch(
         self, queries: list[str], max_results: int = 15, time_window: str = "all"
@@ -50,12 +70,15 @@ class RedditRetriever(BaseRetriever):
             await log_info("reddit", "Circuit breaker open, skipping")
             return []
 
+        feed_type = self._infer_feed_type(queries)
         per_sub = max(5, max_results // max(len(self.subreddits), 1))
         reddit_t = _TIME_REDDIT_MAP.get(time_window, "all")
 
+        await log_info("reddit", f"Inferred feed type: {feed_type}")
+
         async with AsyncClient(timeout=15, follow_redirects=True) as client:
             tasks = [
-                self._fetch_subreddit(client, sub, per_sub, reddit_t)
+                self._fetch_subreddit(client, sub, per_sub, feed_type, reddit_t)
                 for sub in self.subreddits
             ]
             nested = await asyncio.gather(*tasks, return_exceptions=True)
@@ -76,33 +99,33 @@ class RedditRetriever(BaseRetriever):
 
     @with_retry()
     async def _fetch_subreddit(
-        self, client: AsyncClient, sub: str, limit: int, time_filter: str = "all"
+        self, client: AsyncClient, sub: str, limit: int, feed_type: str, time_filter: str = "all"
     ) -> list[RawResult]:
         t0 = time.perf_counter()
-        params: dict = {"limit": limit, "raw_json": "1"}
-        if self.feed_type == "new":
+        params: dict[str, str | int] = {"limit": limit, "raw_json": "1"}
+
+        if feed_type == "new":
             params["sort"] = "new"
-        if self.feed_type == "top":
-            params["t"] = "week"
-
-        url = f"https://www.reddit.com/r/{sub}/{self.feed_type}.json"
-        if time_filter != "all" and self.feed_type == "top":
-            params["t"] = time_filter
-        elif time_filter != "all" and self.feed_type == "hot":
+        if feed_type == "top":
+            params["t"] = time_filter if time_filter != "all" else "week"
+        if feed_type == "rising":
+            params["sort"] = "rising"
+        if feed_type == "hot" and time_filter != "all":
             params["t"] = time_filter
 
+        url = f"https://www.reddit.com/r/{sub}/{feed_type}.json"
         resp = await client.get(url, params=params, headers=self.HEADERS)
         resp.raise_for_status()
         data = resp.json()
-        chunk = self._parse_posts(data, sub)
+        chunk = self._parse_posts(data, sub, feed_type)
         latency = (time.perf_counter() - t0) * 1000
         await log_info(
             self.name,
-            f"r/{sub} ({self.feed_type}) → {len(chunk)} posts in {fmt_ms(latency)}",
+            f"r/{sub} ({feed_type}) → {len(chunk)} posts in {fmt_ms(latency)}",
         )
         return chunk
 
-    def _parse_posts(self, data: dict, sub: str) -> list[RawResult]:
+    def _parse_posts(self, data: dict[str, Any], sub: str, feed_type: str) -> list[RawResult]:
         results: list[RawResult] = []
         children = data.get("data", {}).get("children", [])
 
@@ -140,7 +163,7 @@ class RedditRetriever(BaseRetriever):
                     source=self.name,
                     published_at=published_at,
                     authors=[author] if author else [],
-                    categories=[f"r/{subreddit}", self.feed_type],
+                    categories=[f"r/{subreddit}", feed_type],
                 )
             )
 

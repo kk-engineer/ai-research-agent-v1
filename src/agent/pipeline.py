@@ -6,6 +6,7 @@ from typing import Any
 
 from agent.cache import AsyncCache
 from agent.config import AppConfig
+from agent.embeddings import create_embeddings
 from agent.extractors import ExtractorChain
 from agent.extractors.jina import JinaExtractor
 from agent.extractors.readability_ext import ReadabilityExtractor
@@ -15,8 +16,7 @@ from agent.logger import fmt_ms, log_error, log_info, log_success
 from agent.models.query import RouterDecision, UserQuery
 from agent.models.report import PipelineStats, ResearchReport
 from agent.models.result import RawResult
-from agent.reranker.cross_encoder import CrossEncoderReranker
-from agent.reranker.server import ServerReranker
+from agent.reranker import create_reranker
 from agent.retrievers import (
     ArxivRetriever,
     BaseRetriever,
@@ -39,10 +39,8 @@ class Pipeline:
         self.router = QueryRouter(config)
         self.cache = AsyncCache(config)
         self.extractors = self._build_extractors()
-        if config.reranker.mode == "local":
-            self.reranker = ServerReranker(config)
-        else:
-            self.reranker = CrossEncoderReranker(config)
+        self.embeddings = create_embeddings(config)
+        self.reranker = create_reranker(config)
         self.llm = create_llm(config)
         self.synthesizer = Synthesizer(self.llm, config)
         self.retrievers: list[BaseRetriever] = self._build_retrievers()
@@ -186,13 +184,13 @@ class Pipeline:
             cache_hits=len(cache_hits),
             chunks_after_rerank=len(scored),
             retriever_latencies=retriever_latencies,
-            extraction_latency_ms=round(extraction_latency, 2),
-            rerank_latency_ms=round(rerank_latency, 2),
-            synthesis_latency_ms=(
-                report.stats.synthesis_latency_ms
-                if hasattr(report.stats, "synthesis_latency_ms") else 0.0
+            extraction_latency=round(extraction_latency, 2),
+            rerank_latency=round(rerank_latency, 2),
+            synthesis_latency=(
+                report.stats.synthesis_latency
+                if hasattr(report.stats, "synthesis_latency") else 0.0
             ),
-            total_latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+            total_latency=round((time.perf_counter() - t0), 2),
             llm_tokens_used=(
                 report.stats.llm_tokens_used
                 if hasattr(report.stats, "llm_tokens_used") else 0

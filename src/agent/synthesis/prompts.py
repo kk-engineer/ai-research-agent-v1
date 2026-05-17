@@ -39,7 +39,7 @@ def build_system_prompt() -> str:
         "6. Organise the report with clear headings and subheadings.\n\n"
         "Report structure:\n"
         "## Executive Summary\n"
-        "[2-3 sentence TL;DR covering the most important findings]\n\n"
+        "[2-3 most important points TL;DR covering the most important findings]\n\n"
         "## Key Findings\n"
         "[Detailed synthesis organised by subtopic]\n\n"
         "## Recent Developments\n"
@@ -50,7 +50,7 @@ def build_system_prompt() -> str:
         "## Limitations & Gaps\n"
         "[What the sources do not cover; areas of uncertainty]\n\n"
         "## References\n"
-        "[List numbered citations in format: [N] Title: URL \n]"
+        "[List numbered citations (each in new line) in format: [N] Title: URL \n]"
     )
 
 

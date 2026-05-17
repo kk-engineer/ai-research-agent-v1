@@ -3,16 +3,16 @@ import sys
 import httpx
 
 from agent.config import AppConfig
-from agent.embeddings import ServerEmbedder
+from agent.embeddings import create_embeddings
 from agent.llm import create_llm
 from agent.logger import log_error, log_info, log_success, log_warning
+from agent.reranker import create_reranker
 
 
 async def validate_connectivity(config: AppConfig) -> None:
     """Validate LLM, embeddings, and reranker at startup.
 
-    Exits with code 1 if LLM is unreachable. Logs warnings for other
-    components — the pipeline will surface hard errors if they are required.
+    Exits with code 1 if any component is unreachable.
     """
     await log_info("startup", "Validating component connectivity...")
 
@@ -42,47 +42,30 @@ async def validate_connectivity(config: AppConfig) -> None:
 
     await log_info("startup", "Checking embeddings...")
     try:
-        if config.embeddings.base_url:
-            embedder = ServerEmbedder(
-                config.embeddings.base_url, config.embeddings.model
-            )
-            await embedder.embed("connectivity verification")
-            await log_success(
-                "startup",
-                f"Embeddings (server @ {config.embeddings.base_url}) verified",
-            )
-        elif config.embeddings.mode == "cloud" and config.embeddings.cloud.base_url:
-            embedder = ServerEmbedder(
-                config.embeddings.cloud.base_url, config.embeddings.cloud.model
-            )
-            await embedder.embed("connectivity verification")
-            await log_success(
-                "startup",
-                f"Embeddings (cloud @ {config.embeddings.cloud.base_url}) verified",
-            )
-        else:
-            await log_warning("startup", "Embeddings: no base_url configured, skipping check")
+        embedder = create_embeddings(config)
+        await embedder.embed("connectivity verification")
+        await log_success(
+            "startup",
+            f"Embeddings ({config.embeddings.mode}) verified",
+        )
+    except SystemExit:
+        await log_error("startup", "Embeddings verification failed")
+        raise
     except Exception as e:
-        await log_warning("startup", f"Embeddings check skipped: {e}")
+        await log_error("startup", f"Embeddings check failed: {e}")
+        sys.exit(1)
 
     await log_info("startup", "Checking reranker...")
     try:
-        if config.reranker.mode == "local":
-            from agent.reranker.server import ServerReranker
-
-            reranker = ServerReranker(config)
+        reranker = create_reranker(config)
+        if config.reranker.mode == "cloud":
             await reranker.rank([], "connectivity verification", 0)
-            await log_success("startup", f"Reranker (local server @ {config.reranker.base_url}) verified")
-        else:
-            from agent.reranker.cross_encoder import CrossEncoderReranker
-
-            reranker = CrossEncoderReranker(config)
-            await reranker._load_model()
-            await log_success("startup", "Reranker (cloud model from HuggingFace) verified")
+        await log_success("startup", f"Reranker ({config.reranker.mode}) verified")
     except SystemExit:
         await log_error("startup", "Reranker verification failed")
         raise
     except Exception as e:
-        await log_warning("startup", f"Reranker check skipped: {e}")
+        await log_error("startup", f"Reranker check failed: {e}")
+        sys.exit(1)
 
     await log_success("startup", "All components verified")

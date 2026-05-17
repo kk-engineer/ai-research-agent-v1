@@ -73,10 +73,37 @@ class LLMConfig(BaseModel):
     cloud: LLMCloudConfig = Field(default_factory=LLMCloudConfig)
 
 
-class EmbeddingCloudConfig(BaseModel):
-    base_url: str = Field(default="https://api.openai.com/v1")
+class EmbeddingProviderConfig(BaseModel):
+    base_url: str = ""
     api_key: str = ""
-    model: str = Field(default="text-embedding-3-small")
+    model: str = ""
+
+
+class EmbeddingCloudConfig(BaseModel):
+    timeout: int = Field(default=60, description="Per-provider timeout in seconds")
+    provider_order: list[str] = Field(
+        default=["openai", "nvidia", "huggingface", "gemini", "openrouter"]
+    )
+    openai: EmbeddingProviderConfig = Field(default_factory=lambda: EmbeddingProviderConfig(
+        base_url="https://api.openai.com/v1",
+        model="text-embedding-3-small",
+    ))
+    nvidia: EmbeddingProviderConfig = Field(default_factory=lambda: EmbeddingProviderConfig(
+        base_url="https://integrate.api.nvidia.com/v1",
+        model="nvidia/nv-embed-v2",
+    ))
+    huggingface: EmbeddingProviderConfig = Field(default_factory=lambda: EmbeddingProviderConfig(
+        base_url="https://router.huggingface.co/v1",
+        model="BAAI/bge-m3",
+    ))
+    gemini: EmbeddingProviderConfig = Field(default_factory=lambda: EmbeddingProviderConfig(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        model="text-embedding-004",
+    ))
+    openrouter: EmbeddingProviderConfig = Field(default_factory=lambda: EmbeddingProviderConfig(
+        base_url="https://openrouter.ai/api/v1",
+        model="baai/bge-m3",
+    ))
 
 
 class EmbeddingsConfig(BaseModel):
@@ -133,10 +160,23 @@ class RerankerWeightsConfig(BaseModel):
     length: float = Field(default=0.10, ge=0.0, le=1.0)
 
 
-class RerankerCloudConfig(BaseModel):
+class RerankerProviderConfig(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+
+
+class RerankerCloudConfig(BaseModel):
+    timeout: int = Field(default=60, description="Per-provider timeout in seconds")
+    provider_order: list[str] = Field(default=["nvidia", "huggingface"])
+    nvidia: RerankerProviderConfig = Field(default_factory=lambda: RerankerProviderConfig(
+        base_url="https://integrate.api.nvidia.com/v1",
+        model="nvidia/nv-embedqa-e5-v5-rerank",
+    ))
+    huggingface: RerankerProviderConfig = Field(default_factory=lambda: RerankerProviderConfig(
+        base_url="https://router.huggingface.co/v1",
+        model="BAAI/bge-reranker-v2-m3",
+    ))
 
 
 class RerankerConfig(BaseModel):
@@ -174,7 +214,7 @@ class APIKeyConfig(BaseModel):
     nvidia_api_key: str = Field(default="")
     gemini_api_key: str = Field(default="")
     openrouter_api_key: str = Field(default="")
-    huggingface_api_key: str = Field(default="")
+    hf_api_key: str = Field(default="")
     deepseek_api_key: str = Field(default="")
     anthropic_api_key: str = Field(default="")
 
@@ -200,7 +240,7 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         "NVIDIA_API_KEY": ("api_keys", "nvidia_api_key"),
         "GEMINI_API_KEY": ("api_keys", "gemini_api_key"),
         "OPENROUTER_API_KEY": ("api_keys", "openrouter_api_key"),
-        "HUGGINGFACE_API_KEY": ("api_keys", "huggingface_api_key"),
+        "HUGGINGFACE_API_KEY": ("api_keys", "hf_api_key"),
         "DEEPSEEK_API_KEY": ("api_keys", "deepseek_api_key"),
         "ANTHROPIC_API_KEY": ("api_keys", "anthropic_api_key"),
         "LLM_MODE": ("llm", "mode"),
@@ -220,6 +260,8 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         "LOG_LEVEL": ("log", "log_level"),
         "OUTPUT_REPORTS_DIR": ("output", "reports_dir"),
         "CLOUD_LLM_TIMEOUT": ("llm", "cloud", "timeout"),
+        "CLOUD_EMBEDDINGS_TIMEOUT": ("embeddings", "cloud", "timeout"),
+        "CLOUD_RERANKER_TIMEOUT": ("reranker", "cloud", "timeout"),
     }
 
     for env_key, path_parts in env_map.items():
@@ -293,11 +335,30 @@ def _propagate_api_keys(config: AppConfig) -> None:
             if env_value:
                 provider_cfg.api_key = env_value
 
-    if config.embeddings.cloud and not config.embeddings.cloud.api_key:
-        config.embeddings.cloud.api_key = os.getenv("OPENAI_API_KEY", "")
+    embedding_env_map = {
+        "openai": "OPENAI_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
+        "huggingface": "HUGGINGFACE_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    for provider_name, env_key in embedding_env_map.items():
+        provider_cfg = getattr(config.embeddings.cloud, provider_name, None)
+        if provider_cfg and not provider_cfg.api_key:
+            env_value = os.getenv(env_key)
+            if env_value:
+                provider_cfg.api_key = env_value
 
-    if config.reranker.cloud and not config.reranker.cloud.api_key:
-        config.reranker.cloud.api_key = os.getenv("HF_API_KEY", "")
+    reranker_env_map = {
+        "nvidia": "NVIDIA_API_KEY",
+        "huggingface": "HUGGINGFACE_API_KEY",
+    }
+    for provider_name, env_key in reranker_env_map.items():
+        provider_cfg = getattr(config.reranker.cloud, provider_name, None)
+        if provider_cfg and not provider_cfg.api_key:
+            env_value = os.getenv(env_key)
+            if env_value:
+                provider_cfg.api_key = env_value
 
 
 def get_config() -> AppConfig:
