@@ -1,3 +1,4 @@
+import asyncio
 import re
 import time
 
@@ -25,43 +26,38 @@ class GitHubSearchRetriever(BaseRetriever):
 
     BASE_URL = "https://github.com/search"
 
-    async def fetch(self, queries: list[str], max_results: int) -> list[RawResult]:
-        results: list[RawResult] = []
-        seen: set[str] = set()
+    async def fetch(
+        self, queries: list[str], max_results: int = 15, time_window: str = "all"
+    ) -> list[RawResult]:
+        if self._is_circuit_open():
+            await log_info("github_search", "Circuit breaker open, skipping")
+            return []
+
         per_query = max(2, max_results // max(len(queries), 1))
 
         async with AsyncClient(timeout=15, follow_redirects=True) as client:
-            for query in queries:
-                t0 = time.perf_counter()
-                try:
-                    chunk = await self._search(client, query, per_query)
-                    latency = (time.perf_counter() - t0) * 1000
-                    await log_info(
-                        self.name,
-                        f"q=\"{query[:60]}\" → {len(chunk)} results in {fmt_ms(latency)}",
-                    )
-                    for r in chunk:
-                        if r.id not in seen:
-                            seen.add(r.id)
-                            results.append(r)
-                except Exception as e:
-                    latency = (time.perf_counter() - t0) * 1000
-                    await log_info(
-                        self.name,
-                        f"q=\"{query[:60]}\" failed in {fmt_ms(latency)}: {e}",
-                    )
-                    continue
+            tasks = [self._search(client, q, per_query) for q in queries]
+            nested = await asyncio.gather(*tasks, return_exceptions=True)
 
-        return results[:max_results]
+        results = [r for batch in nested if isinstance(batch, list) for r in batch]
+        deduped = self._deduplicate(results)
+        return deduped[:max_results]
 
     @with_retry()
     async def _search(
         self, client: AsyncClient, query: str, limit: int
     ) -> list[RawResult]:
+        t0 = time.perf_counter()
         params = {"q": query, "type": "repositories"}
         resp = await client.get(self.BASE_URL, params=params, headers=_GITHUB_HEADERS)
         resp.raise_for_status()
-        return self._parse_html(resp.text, limit)
+        chunk = self._parse_html(resp.text, limit)
+        latency = (time.perf_counter() - t0) * 1000
+        await log_info(
+            self.name,
+            f"q=\"{query[:60]}\" → {len(chunk)} results in {fmt_ms(latency)}",
+        )
+        return chunk
 
     def _parse_html(self, html: str, limit: int) -> list[RawResult]:
         from bs4 import BeautifulSoup

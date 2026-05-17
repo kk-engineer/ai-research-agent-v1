@@ -72,7 +72,8 @@ def build_synthesis_prompt(
             f"Source: {chunk.metadata.get('source', 'unknown')}\n"
             f"Date: {chunk.metadata.get('published_at', 'unknown')}\n"
             f"---\n"
-            f"{chunk.content_markdown[:800]}"
+            f"{chunk.content_markdown[:2000]}\n"
+            f"{'='*40}\n"
         )
         source_blocks.append(block)
 
@@ -110,6 +111,7 @@ def build_classification_prompt(query: str) -> str:
         '    "mode": "academic" | "general" | "hybrid",\n'
         '    "academic_weight": <float 0.0-1.0>,\n'
         '    "general_weight": <float 0.0-1.0>,\n'
+        '    "sub_queries": ["<best sub-query 1>", "<best sub-query 2>", ...],\n'
         '    "explanation": "<brief reason>"\n'
         '}}\n\n'
         f'Query: {query}'

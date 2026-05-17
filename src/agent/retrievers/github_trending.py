@@ -1,5 +1,8 @@
+import asyncio
+
 from httpx import AsyncClient
 
+from agent.logger import log_info
 from agent.models.result import RawResult
 from agent.retrievers.base import BaseRetriever, with_retry
 
@@ -26,22 +29,24 @@ class GitHubTrendingRetriever(BaseRetriever):
 
     BASE_URL = "https://github.com/trending"
 
-    async def fetch(self, queries: list[str], max_results: int) -> list[RawResult]:
-        seen: set[str] = set()
-        results: list[RawResult] = []
+    async def fetch(
+        self, queries: list[str], max_results: int = 15, time_window: str = "all"
+    ) -> list[RawResult]:
+        if self._is_circuit_open():
+            await log_info("github_trending", "Circuit breaker open, skipping")
+            return []
+
+        urls = self._urls_to_fetch(queries)
 
         async with AsyncClient(timeout=15, follow_redirects=True) as client:
-            for page in self._urls_to_fetch(queries):
-                try:
-                    chunk = await self._fetch_page(client, page, max_results)
-                    for r in chunk:
-                        if r.id not in seen:
-                            seen.add(r.id)
-                            results.append(r)
-                except Exception:
-                    continue
+            tasks = [self._fetch_page(client, url, max_results) for url in urls]
+            nested = await asyncio.gather(*tasks, return_exceptions=True)
 
-        return results[:max_results]
+        results = [r for batch in nested if isinstance(batch, list) for r in batch]
+        deduped = self._deduplicate(results)
+
+        self._record_success()
+        return deduped[:max_results]
 
     def _urls_to_fetch(self, queries: list[str]) -> list[str]:
         urls = [self.BASE_URL]
@@ -57,7 +62,9 @@ class GitHubTrendingRetriever(BaseRetriever):
     ) -> list[RawResult]:
         resp = await client.get(url, headers=_GITHUB_HEADERS)
         resp.raise_for_status()
-        return self._parse_html(resp.text, limit)
+        chunk = self._parse_html(resp.text, limit)
+        await log_info("github_trending", f"Fetched {len(chunk)} from {url}")
+        return chunk
 
     def _parse_html(self, html: str, limit: int) -> list[RawResult]:
         from bs4 import BeautifulSoup

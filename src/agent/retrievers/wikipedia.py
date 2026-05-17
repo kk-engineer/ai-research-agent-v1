@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import httpx
@@ -13,25 +14,25 @@ class WikipediaRetriever(BaseRetriever):
     SEARCH_URL = "https://en.wikipedia.org/w/api.php"
     SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 
-    async def fetch(self, queries: list[str], max_results: int = 5) -> list[RawResult]:
+    async def fetch(
+        self, queries: list[str], max_results: int = 5, time_window: str = "all"
+    ) -> list[RawResult]:
         if self._is_circuit_open():
             await log_info("wikipedia", "Circuit breaker open, skipping")
             return []
 
-        seen: set[str] = set()
-        results: list[RawResult] = []
+        per_query = max(1, max_results // max(len(queries), 1))
 
         headers = {"User-Agent": "AIResearchAgent/1.0 (research agent; karan@example.com)"}
         async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-            for query in queries:
-                batch = await self._search(client, query, max_results)
-                for r in batch:
-                    if r.id not in seen:
-                        seen.add(r.id)
-                        results.append(r)
+            tasks = [self._search(client, q, per_query) for q in queries]
+            nested = await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = [r for batch in nested if isinstance(batch, list) for r in batch]
+        deduped = self._deduplicate(results)
 
         self._record_success()
-        return results
+        return deduped[:max_results]
 
     @with_retry()
     async def _search(

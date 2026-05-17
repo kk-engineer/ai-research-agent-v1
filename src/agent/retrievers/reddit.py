@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import UTC, datetime
 
@@ -7,6 +8,14 @@ from agent.config import AppConfig
 from agent.logger import fmt_ms, log_info
 from agent.models.result import RawResult
 from agent.retrievers.base import BaseRetriever, with_retry
+
+_TIME_REDDIT_MAP = {
+    "day": "day",
+    "week": "week",
+    "month": "month",
+    "year": "year",
+    "all": "all",
+}
 
 
 class RedditRetriever(BaseRetriever):
@@ -34,36 +43,24 @@ class RedditRetriever(BaseRetriever):
         self.subreddits = config.retrievers.reddit.subreddits
         self.feed_type = config.retrievers.reddit.feed_type
 
-    async def fetch(self, queries: list[str], max_results: int) -> list[RawResult]:
+    async def fetch(
+        self, queries: list[str], max_results: int = 15, time_window: str = "all"
+    ) -> list[RawResult]:
         if self._is_circuit_open():
             await log_info("reddit", "Circuit breaker open, skipping")
             return []
 
-        seen: set[str] = set()
-        results: list[RawResult] = []
         per_sub = max(5, max_results // max(len(self.subreddits), 1))
+        reddit_t = _TIME_REDDIT_MAP.get(time_window, "all")
 
         async with AsyncClient(timeout=15, follow_redirects=True) as client:
-            for sub in self.subreddits:
-                t0 = time.perf_counter()
-                try:
-                    chunk = await self._fetch_subreddit(client, sub, per_sub)
-                    latency = (time.perf_counter() - t0) * 1000
-                    await log_info(
-                        self.name,
-                        f"r/{sub} ({self.feed_type}) → {len(chunk)} posts in {fmt_ms(latency)}",
-                    )
-                    for r in chunk:
-                        if r.id not in seen:
-                            seen.add(r.id)
-                            results.append(r)
-                except Exception as e:
-                    latency = (time.perf_counter() - t0) * 1000
-                    await log_info(
-                        self.name,
-                        f"r/{sub} failed in {fmt_ms(latency)}: {e}",
-                    )
-                    continue
+            tasks = [
+                self._fetch_subreddit(client, sub, per_sub, reddit_t)
+                for sub in self.subreddits
+            ]
+            nested = await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = [r for batch in nested if isinstance(batch, list) for r in batch]
 
         query_keywords = set(" ".join(queries).lower().split())
         scored = []
@@ -79,19 +76,31 @@ class RedditRetriever(BaseRetriever):
 
     @with_retry()
     async def _fetch_subreddit(
-        self, client: AsyncClient, sub: str, limit: int
+        self, client: AsyncClient, sub: str, limit: int, time_filter: str = "all"
     ) -> list[RawResult]:
-        params = {"limit": limit, "raw_json": "1"}
+        t0 = time.perf_counter()
+        params: dict = {"limit": limit, "raw_json": "1"}
         if self.feed_type == "new":
             params["sort"] = "new"
         if self.feed_type == "top":
             params["t"] = "week"
 
         url = f"https://www.reddit.com/r/{sub}/{self.feed_type}.json"
+        if time_filter != "all" and self.feed_type == "top":
+            params["t"] = time_filter
+        elif time_filter != "all" and self.feed_type == "hot":
+            params["t"] = time_filter
+
         resp = await client.get(url, params=params, headers=self.HEADERS)
         resp.raise_for_status()
         data = resp.json()
-        return self._parse_posts(data, sub)
+        chunk = self._parse_posts(data, sub)
+        latency = (time.perf_counter() - t0) * 1000
+        await log_info(
+            self.name,
+            f"r/{sub} ({self.feed_type}) → {len(chunk)} posts in {fmt_ms(latency)}",
+        )
+        return chunk
 
     def _parse_posts(self, data: dict, sub: str) -> list[RawResult]:
         results: list[RawResult] = []

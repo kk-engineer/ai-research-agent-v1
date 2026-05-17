@@ -38,11 +38,23 @@ class BaseRetriever(ABC):
         self._circuit = CircuitBreakerState()
 
     @abstractmethod
-    async def fetch(self, queries: list[str], max_results: int) -> list[RawResult]:
+    async def fetch(
+        self, queries: list[str], max_results: int, time_window: str = "all"
+    ) -> list[RawResult]:
         ...
 
     async def health_check(self) -> bool:
         return True
+
+    @staticmethod
+    def _deduplicate(results: list[RawResult]) -> list[RawResult]:
+        seen: set[str] = set()
+        out = []
+        for r in results:
+            if r.id not in seen:
+                seen.add(r.id)
+                out.append(r)
+        return out
 
     def _is_circuit_open(self) -> bool:
         if self._circuit.state == "closed":

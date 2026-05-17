@@ -95,6 +95,8 @@ class Pipeline:
 
     def _active_retrievers(self, decision: RouterDecision) -> list[BaseRetriever]:
         active = [r for r in self.retrievers if decision.mode in r.supports_modes]
+        if decision.mode == "general" and decision.time_window in ("day", "week", "month"):
+            active = [r for r in active if r.name != "wikipedia"]
         if self._is_software_query(decision.query):
             for r in self.retrievers:
                 if r.name in self.SOFTWARE_PRIORITY_SOURCES and r not in active:
@@ -120,22 +122,18 @@ class Pipeline:
             return cached
 
         active = self._active_retrievers(decision)
-        await log_info("pipeline", f"Retrieval starting — {len(active)} active retrievers")
-
-        temporal_keywords = {
-            "last", "recent", "latest", "this week", "this month",
-            "past week", "past month", "upcoming", "new",
-        }
-        is_temporal = any(kw in query.raw.lower() for kw in temporal_keywords)
+        await log_info(
+            "pipeline",
+            f"Retrieval starting — {len(active)} active, tw={decision.time_window}",
+        )
 
         retriever_latencies: dict[str, float] = {}
         retriever_tasks = []
         for r in active:
-            kwargs = {}
-            if isinstance(r, DuckDuckGoRetriever):
-                kwargs["timelimit"] = "m" if is_temporal else "y"
             retriever_tasks.append(
-                self._fetch_with_timing(r, decision.sub_queries, retriever_latencies, **kwargs)
+                self._fetch_with_timing(
+                    r, decision.sub_queries, retriever_latencies, decision.time_window
+                )
             )
 
         gather_timeout = self.config.timeouts.retriever_s + 5
@@ -214,14 +212,16 @@ class Pipeline:
         retriever: BaseRetriever,
         sub_queries: list[str],
         latencies: dict[str, float],
-        **kwargs,
+        time_window: str = "all",
     ) -> list[RawResult]:
         t0 = time.perf_counter()
         timeout = self.config.timeouts.retriever_s
         try:
             results = await asyncio.wait_for(
                 retriever.fetch(
-                    sub_queries, self.config.retrievers.max_results_per_source, **kwargs
+                    sub_queries,
+                    self.config.retrievers.max_results_per_source,
+                    time_window=time_window,
                 ),
                 timeout=timeout,
             )

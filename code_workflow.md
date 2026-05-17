@@ -6,35 +6,39 @@
 User Query (CLI or Shell)
         │
         ▼
-  ┌──────────────────────────────────────────────────────┐
-  │                    main.py / cli.py                  │
-  │  - Typer CLI (run, shell, config-show, cache-clear)  │
-  │  - Interactive shell with /commands                  │
-  └──────────────────────┬───────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │                    main.py / cli.py                      │
+  │  - Typer CLI (run, shell, config-show, cache-clear,      │
+  │           cache-stats, health)                           │
+  │  - Interactive shell with /commands                      │
+  └──────────────────────┬───────────────────────────────────┘
                          │
                          ▼
-  ┌──────────────────────────────────────────────────────┐
-  │                   startup.py                         │
-  │  - validate_connectivity()                           │
-  │    ├── LLM check (complete with "Respond with 'OK'") │
-  │    ├── Embeddings check (server or sentence-trans.)  │
-  │    └── Reranker check (local server or HF model)     │
-  └──────────────────────┬───────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │                    startup.py                            │
+  │  - validate_connectivity()                               │
+  │    ├── LLM check (complete "Respond with 'OK'")          │
+  │    ├── Embeddings check (server or OpenAI-compat. API)   │
+  │    └── Reranker check (local server or HF CrossEncoder)  │
+  └──────────────────────┬───────────────────────────────────┘
                          │
                          ▼
-  ┌──────────────────────────────────────────────────────┐
-  │                   pipeline.py                        │
-  │  Pipeline.run(query_str)                             │
-  │                                                      │
-  │   1. ROUTE    ───►  QueryRouter.classify()           │
-  │   2. CACHE    ───►  AsyncCache.get_report()          │
-  │   3. RETRIEVE ───►  6 retrievers in parallel         │
-  │   4. EXTRACT  ───►  ExtractorChain.extract_all()     │
-  │   5. RERANK   ───►  ServerReranker / CrossEncoder    │
-  │   6. SYNTHESIZE ─►  Synthesizer.run()                │
-  │   7. CACHE    ───►  AsyncCache.set_report()          │
-  │   8. SAVE     ───►  ResearchReport.save()            │
-  └──────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │                    pipeline.py                           │
+  │  Pipeline.run(query_str)                                 │
+  │                                                          │
+  │   1. ROUTE    ───►  QueryRouter.classify()              │
+  │   2. CACHE    ───►  AsyncCache.get_report()             │
+  │   3. RETRIEVE ───►  9 retrievers in parallel            │
+  │        ├── Software-query detection injects              │
+  │        │   github_search, github_trending, reddit        │
+  │   4. CACHE    ───►  AsyncCache.partition()              │
+  │   5. EXTRACT  ───►  ExtractorChain.extract_all()         │
+  │   6. RERANK   ───►  ServerReranker / CrossEncoder       │
+  │   7. SYNTHESIZE ─►  Synthesizer.run()                    │
+  │   8. CACHE    ───►  AsyncCache.set_report()              │
+  │   9. SAVE     ───►  ResearchReport.save()                │
+  └──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -47,12 +51,12 @@ User Query (CLI or Shell)
 
 | Command | File | Description |
 |---------|------|-------------|
-| `run <query>` | `main.py:43-131` | Single-shot research pipeline |
-| `shell` | `main.py:234-250` | Interactive REPL |
-| `config-show` | `main.py:133-146` | Print resolved config (keys masked) |
-| `cache-clear` | `main.py:149-159` | Purge SQLite cache |
-| `cache-stats` | `main.py:162-174` | Show L1/L2 cache entry counts |
-| `health` | `main.py:177-231` | Test all retrievers + LLM |
+| `run <query>` | `main.py` | Single-shot research pipeline |
+| `shell` | `main.py` / `cli.py` | Interactive REPL |
+| `config-show` | `main.py` | Print resolved config (keys masked) |
+| `cache-clear` | `main.py` | Purge SQLite cache |
+| `cache-stats` | `main.py` | Show L1/L2 cache entry counts |
+| `health` | `main.py` | Test all retrievers + LLM |
 
 Flow:
 1. `load_config()` reads `config.toml` + env var overrides
@@ -87,35 +91,67 @@ Pydantic `BaseModel` hierarchy loaded from `config.toml`:
 ```
 AppConfig
 ├── llm: LLMConfig
-│   ├── backend: "local" | "remote"
+│   ├── mode: "local" | "cloud"
 │   ├── base_url (e.g. http://localhost:8000/v1)
 │   ├── model (e.g. mistral-nemo-12b)
 │   ├── n_ctx (default 8192)
 │   ├── temperature (default 0.3)
 │   ├── max_tokens (default 2048)
 │   ├── response_buffer (default 1024)
-│   └── remote: LLMRemoteConfig (base_url + model)
+│   ├── remote: LLMRemoteConfig (base_url + model for legacy remote)
+│   └── cloud: LLMCloudConfig
+│       ├── timeout (default 60s)
+│       ├── provider_order: list[str]
+│       │   (nvidia → gemini → openrouter → huggingface →
+│       │    deepseek → openai → anthropic)
+│       └── Per-provider: LLMProviderConfig
+│           ├── nvidia (base_url + model)
+│           ├── gemini
+│           ├── openrouter
+│           ├── huggingface
+│           ├── deepseek
+│           ├── openai
+│           └── anthropic
 ├── embeddings: EmbeddingsConfig
+│   ├── mode: "local" | "cloud"
+│   ├── base_url (server embedder endpoint)
+│   ├── model (e.g. nomic-embed-text)
+│   └── cloud: EmbeddingCloudConfig (OpenAI-compatible)
 ├── retrievers: RetrieverConfig
 │   ├── max_results_per_source (default 15)
-│   ├── enabled: list[str] (default 6 retrievers)
-│   └── rss_feeds: RSSFeedsConfig (7 default feed URLs)
-├── extractors: ExtractorConfig (chunk_size_words, concurrency)
+│   ├── enabled: list[str] (default 9 retrievers)
+│   ├── rss_feeds: RSSFeedsConfig (11 default feed URLs)
+│   └── reddit: RedditConfig
+│       ├── subreddits (LocalLLaMA, MachineLearning, artificial, OpenAI)
+│       └── feed_type ("hot")
+├── extractors: ExtractorConfig
+│   └── extraction_concurrency (default 10)
 ├── reranker: RerankerConfig
 │   ├── top_k (default 20)
 │   ├── mode: "local" | "cloud"
-│   │   ├── "local" → ServerReranker (connects to local server at base_url)
-│   │   └── "cloud" → CrossEncoderReranker (downloads from HuggingFace)
-│   ├── base_url (localhost for local, empty cloud)
-│   └── weights: semantic=0.55, freshness=0.20, authority=0.15, length=0.10
-├── cache: CacheConfig (SQLite DB path + TTLs)
-├── timeouts: TimeoutConfig (retriever, extractor, LLM)
+│   │   ├── "local" → ServerReranker
+│   │   └── "cloud" → CrossEncoderReranker (HF model)
+│   ├── base_url (localhost for local)
+│   ├── model (GGUF name or HF model)
+│   └── weights: semantic=0.55, freshness=0.20,
+│                authority=0.15, length=0.10
+├── cache: CacheConfig (SQLite DB path + TTLs + enabled flag)
+├── timeouts: TimeoutConfig (retriever_s, default 30)
 ├── output: OutputConfig (reports_dir)
-├── ui: UIConfig (log_level)
-└── api_keys: APIKeyConfig (openai, jina, semantic_scholar)
+├── log: UIConfig (log_level)  — note: field name is "log"
+└── api_keys: APIKeyConfig
+    ├── semantic_scholar_api_key
+    ├── openai_api_key
+    ├── jina_api_key
+    ├── nvidia_api_key
+    ├── gemini_api_key
+    ├── openrouter_api_key
+    ├── huggingface_api_key
+    ├── deepseek_api_key
+    └── anthropic_api_key
 ```
 
-**Env var overrides** (30+ mapped, e.g. `OPENAI_API_KEY`, `LLM_BACKEND`, `LLM_N_CTX`). Environment variables take precedence over TOML file values.
+**Env var overrides** (30+ mapped, e.g. `OPENAI_API_KEY`, `LLM_MODE`, `LLM_BASE_URL`, `LLM_N_CTX`, `RERANKER_MODE`, `CLOUD_LLM_TIMEOUT`). Environment variables take precedence over TOML file values. API keys are also propagated to cloud provider configs automatically.
 
 ---
 
@@ -123,9 +159,9 @@ AppConfig
 
 `validate_connectivity()` runs before any query:
 
-1. **LLM**: Sends `"Respond with exactly 'OK'."` via `llm.complete()`. Exits with code 1 if unreachable.
-2. **Embeddings**: Pings server embedder or sentence-transformer. Warning only on failure.
-3. **Reranker**: If `mode == "local"` pings the local reranker server at `base_url`; if `mode == "cloud"` loads the cross-encoder model from HuggingFace. Warning only on failure.
+1. **LLM**: Creates LLM via `create_llm(config)`, sends `"Respond with exactly 'OK'."` via `llm.complete()`. **Hard failure** — exits with code 1 if unreachable (ConnectError, HTTP error, or any exception).
+2. **Embeddings**: Pings server embedder at `embeddings.base_url` or `embeddings.cloud.base_url`. **Warning only** on failure.
+3. **Reranker**: If `mode == "local"` pings `ServerReranker`; if `mode == "cloud"` loads `CrossEncoder` model from HuggingFace. **Warning only** on failure.
 
 ---
 
@@ -146,15 +182,21 @@ decision = await self.router.classify(query.raw)
 #### 5.1.1 Heuristic Classification
 
 1. Extract lowercase alphanumeric tokens from query
-2. Match against `ACADEMIC_KEYWORDS` (14 terms: paper, arxiv, survey, benchmark, sota, etc.) and `GENERAL_KEYWORDS` (16 terms: news, latest, release, trending, etc.)
+2. Match against `ACADEMIC_KEYWORDS` (20 terms: paper, papers, arxiv, research, survey, published, journal, conference, citation, abstract, dataset, benchmark, sota, state of the art, preprint, study, experiment, model architecture, training, fine-tuning) and `GENERAL_KEYWORDS` (22 terms: news, latest, recent, release, announced, trending, product, launch, update, blog, startup, funding, acquisition, interview, podcast, tutorial, demo, github, open source, available now)
 3. Compute weights: `academic_weight = academic_matches / total`, `general_weight = general_matches / total`
 4. Mode assignment: `academic_weight >= 0.7 → "academic"`, `general_weight >= 0.7 → "general"`, else `"hybrid"`
 5. Confidence = `min(1.0, total_matches / 5.0)`
-6. If confidence >= 0.7, return immediately. Otherwise fall back to...
+6. If confidence >= 0.7, return immediately with `classified_by="heuristic"`. Otherwise fall back to...
 
 #### 5.1.2 LLM Classification Fallback
 
-Not actually used — the `_llm_classify()` method does simple keyword matching (same keywords). The LLM classification prompt (`build_classification_prompt` in `prompts.py`) exists but is never invoked because the heuristic handles everything.
+`_llm_classify()` — does **not** actually call the LLM. Instead performs simple keyword matching against the same keyword sets:
+
+- If any academic keyword found → `mode="academic"` (aw=0.8, gw=0.2)
+- Else if any general keyword found → `mode="general"` (aw=0.2, gw=0.8)
+- Else → `mode="hybrid"` (aw=0.5, gw=0.5)
+
+Returns with `classified_by="llm"`. The LLM classification prompt (`build_classification_prompt` in `prompts.py`) exists but is never invoked.
 
 #### 5.1.3 Query Decomposition
 
@@ -163,7 +205,7 @@ Not actually used — the `_llm_classify()` method does simple keyword matching 
 1. **Original query**
 2. **"And" splits**: If query contains " and ", split into parts
 3. **"Vs" splits**: If query contains " vs ", split into parts
-4. **Year suffix**: Appends `" {current_year}"` (computed from `datetime.now().year`) — e.g. " 2026"
+4. **Year suffix**: Appends `" {current_year}"` (e.g. " 2026")
 5. **"Recent" suffix**: Appends `" recent"` if not already in query
 6. **Domain qualifiers**: Appends "machine learning", "AI research", "deep learning"
 7. Deduplicates, limits to 5
@@ -178,7 +220,7 @@ cached = await self.cache.get_report(query.raw)
 
 - SQLite-backed (aiosqlite), tables: `chunks` and `reports`
 - TTL: chunks 24h, reports 6h
-- Lookup by SHA256 hash of lowercase query
+- Lookup by SHA256 hash of lowercase trimmed query
 - Stale entries auto-deleted on read
 - Skipped if `config.cache.enabled = False`
 
@@ -196,38 +238,63 @@ All active retrievers run in parallel. Active = those whose `supports_modes` inc
 | SemanticScholarRetriever | academic, hybrid | `semanticscholar` Python client |
 | WikipediaRetriever | all | `en.wikipedia.org` REST API |
 | HackerNewsRetriever | general, hybrid | `hn.algolia.com/api/v1/search` |
-| RSSRetriever | general, hybrid | feedparser on 7 RSS feeds |
+| RSSRetriever | general, hybrid | feedparser on 11 RSS feeds |
 | DuckDuckGoRetriever | general, hybrid | `ddgs` library |
+| GitHubSearchRetriever | general, hybrid | `github.com/search` HTML scraping |
+| GitHubTrendingRetriever | general, hybrid | `github.com/trending` HTML scraping |
+| RedditRetriever | general, hybrid | `reddit.com/r/{sub}/hot.json` |
+
+#### Software Query Detection
+
+Before selecting active retrievers, `Pipeline._is_software_query()` checks for software-related keywords:
+
+```python
+SOFTWARE_KEYWORDS = {
+    "software", "code", "library", "framework", "api", "sdk", "tool",
+    "cli", "implementation", "implement", "build", "docker", "kubernetes",
+    "package", "repository", "repo", "npm", "pip", "cargo", "pypi",
+    "programming", "language", "compiler", "debugger", "plugin",
+    "extension", "middleware", "backend", "frontend", "database", "orm",
+    "rest", "graphql", "websocket", "deploy", "devops", "ci/cd",
+}
+```
+
+`SOFTWARE_PRIORITY_SOURCES = {"github_search", "github_trending", "hackernews", "reddit"}`
+
+If any keyword matches, software-priority sources are injected at the front of the active list (even if they wouldn't normally activate for that mode).
 
 #### 3a. DuckDuckGoRetriever
 
-- **`timelimit` auto-detection**: If sub-queries contain temporal keywords (last, recent, latest, this week, this month, past week, past month, new, upcoming), uses `timelimit='m'` (month). Otherwise `timelimit='y'`.
+- **`timelimit` auto-detection**: If sub-queries contain temporal keywords (last, recent, latest, this week, this month, this year, past week, past month, past year, new, upcoming), uses `timelimit='m'` (month). Otherwise `timelimit='y'`.
 - **Circuit breaker**: After 5 failures, skips for 60s
 - **`@with_retry`**: Retries up to 3 times with exponential backoff + jitter on 429/500/502/503
-- Sub-queries AND year suffixes sent to DDGS
+- Runs DDGS in a thread executor (ddgs is synchronous)
 - No `published_at` on results (DuckDuckGo doesn't return dates)
 
 #### 3b. ArxivRetriever
 
 - Uses `arxiv.Client` with `page_size=50`, 3s delay, 3 retries
+- Runs in thread executor (arxiv client is synchronous)
 - Sort by `SubmittedDate` (newest first)
 - Each paper returns: title, entry_id (URL), summary (snippet), published date, authors, categories
 
 #### 3c. SemanticScholarRetriever
 
 - Uses `semanticscholar.SemanticScholar` client
+- Runs in thread executor (client is synchronous)
 - Searches with `search_paper(query, limit=max_results)`
 - Returns: title, paperId/URL, TLDR/abstract, publicationDate, authors
 
 #### 3d. HackerNewsRetriever
 
-- Calls `hn.algolia.com/api/v1/search` with `tags=story`
-- Returns: objectID, title, URL, author (`created_at` now captured as `published_at`)
+- Calls `hn.algolia.com/api/v1/search` with `tags=story` via httpx
+- Returns: objectID, title, URL, author, created_at
 
 #### 3e. RSSRetriever
 
-- Fetches 7 default RSS feeds (arXiv cs.AI, arXiv cs.LG, TechCrunch AI, VentureBeat AI, HuggingFace blog, DeepMind blog, OpenAI blog) — configurable
-- Parses with `feedparser`, extracts title, link, summary, published date
+- Fetches 11 default RSS feeds (arXiv cs.AI, arXiv cs.LG, TechCrunch AI, VentureBeat AI, HuggingFace blog, DeepMind blog, OpenAI blog, 4 Reddit RSS feeds) — configurable
+- Parses with `feedparser` in thread executor
+- Extracts title, link, summary, published date
 - Post-filter: scores results by keyword overlap with sub-queries, keeps top `max_results`
 
 #### 3f. WikipediaRetriever
@@ -236,8 +303,36 @@ All active retrievers run in parallel. Active = those whose `supports_modes` inc
 - Fetches page summary via REST API `page/summary/{title}`
 - Returns: title, URL, snippet
 
+#### 3g. GitHubSearchRetriever
+
+- Scrapes `https://github.com/search?q={query}&type=repositories`
+- Parses HTML with BeautifulSoup, selects `[data-testid="results-list"] > div`
+- Extracts: repo name, URL, description, language, topics
+- No published_at available
+
+#### 3h. GitHubTrendingRetriever
+
+- Scrapes `https://github.com/trending` (optionally with language suffix if detected in query)
+- Parses HTML with BeautifulSoup, selects `article.Box-row`
+- Extracts: repo name, URL, description, language, stars today
+- Language detection from query terms (Python, JS, Rust, Go, etc.)
+- No published_at available
+
+#### 3i. RedditRetriever
+
+- Fetches `https://www.reddit.com/r/{sub}/{feed_type}.json` per configured subreddit
+- **Circuit breaker**: After 5 failures, skips for 60s
+- **`@with_retry`**: 3 retries with exponential backoff
+- Post-filter: scores results by keyword overlap against query terms
+- Extracts: title, permalink (URL), selftext/URL, created_utc → published_at, score, num_comments, author
+
+**Post-retrieval timing:**
+- Each retriever gets `_fetch_with_timing()` wrapper that enforces `config.timeouts.retriever_s` timeout (default 30s)
+- Latencies collected into `retriever_latencies` dict
+- Retriever failures logged; results silently dropped
+
 **Post-retrieval filtering:**
-- `_flatten_deduplicate()` — dedup by URL hash across all retrievers
+- `_flatten_deduplicate()` — dedup by URL hash across all retrievers, skips exceptions
 - `_filter_by_date()` — drops results with `published_at.year < current_year` (e.g. before 2026)
 
 ### Stage 4: Cache Partition
@@ -261,7 +356,7 @@ Runs concurrently with a semaphore (default concurrency: 10). Three extractors t
 | Extractor (name) | Method | Strengths |
 |-----------------|--------|-----------|
 | **TrafilaturaExtractor** (trafilatura) | Downloads page + `trafilatura.extract(format="markdown")` | Best quality, handles most sites |
-| **JinaExtractor** (jina) | `r.jina.ai/{url}` proxy API | Falls back when direct fetch fails |
+| **JinaExtractor** (jina) | `r.jina.ai/{url}` proxy API with Bearer token auth | Falls back when direct fetch fails |
 | **ReadabilityExtractor** (readability) | `readability.Document` + `markdownify` | Last resort |
 
 Each chunk stores: `chunk_id`, `source_id`, `url`, `title`, `content_markdown`, `word_count`, `extractor_used`, `extraction_latency_ms`, `metadata`.
@@ -280,15 +375,17 @@ Two modes, selected via `reranker.mode` in config:
 
 #### Local Mode — ServerReranker (`reranker.mode = "local"`)
 - Connects to a locally running reranker server at `base_url` (e.g. `http://localhost:8002`)
-- POSTs to `{base_url}/rerank` with `{query, documents}`
+- POSTs to `{base_url}/rerank` with `{query, documents, model?}`
 - Expects `{results: [{index, relevance_score}]}`
 - Use this when you have a reranker model served behind an API (e.g. llama.cpp server, custom FastAPI endpoint)
 
 #### Cloud Mode — CrossEncoderReranker (`reranker.mode = "cloud"`)
-- Downloads the model from HuggingFace via `sentence-transformers.CrossEncoder` (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`)
+- Downloads the model from HuggingFace via `sentence-transformers.CrossEncoder`
+- Default: `cross-encoder/ms-marco-MiniLM-L-6-v2`
+- Supports GGUF model name resolution via `_resolve_model_name()` (maps short names like `jina-reranker-v2-base-multilingual` to HuggingFace paths)
 - Creates query-document pairs `(query, chunk.content[:512])`
-- Predicts relevance scores locally
-- Use this when you want the reranker to run locally without a separate server process
+- Predicts relevance scores locally with `model.predict(pairs)` in a thread executor
+- Device: "mps" (Apple Silicon)
 
 Both modes compute the same composite score:
 
@@ -299,8 +396,8 @@ final = semantic × 0.55 + freshness × 0.20 + authority × 0.15 + length × 0.1
 Where:
 - **semantic**: sigmoid of raw model score
 - **freshness**: `1 / (1 + days_old / 30)` — decays over time, 0.5 for unknown
-- **authority**: from lookup table (arxiv=0.90, openai=0.78, techcrunch=0.60, duckduckgo=0.40, etc.)
-- **length**: `min(1.0, word_count / 300)` — rewards substantive content
+- **authority**: from lookup table (arxiv=0.90, semantic_scholar=0.88, wikipedia=0.80, openai=0.78, huggingface=0.75, techcrunch=0.60, hackernews=0.50, duckduckgo=0.40, etc.)
+- **length**: `min(1.0, word_count / 300)`, min 0.2 for < 50 words — rewards substantive content
 
 #### Logging
 
@@ -332,11 +429,13 @@ report = await self.synthesizer.run(query, decision, scored)
 system_prompt = build_system_prompt()
 ```
 
+**File:** `synthesis/prompts.py`
+
 Contains:
 - Role: "expert AI/ML research analyst"
-- **CRITICAL DATE RULE**: "Current date is {today}". Explicitly computes relative time periods (e.g. "last 4 weeks" = from {date-28} to {today}). Instructs LLM to NOT use training data dates.
+- **CRITICAL DATE RULE**: "Current date is {today}". Explicitly computes relative time periods (e.g. "last 4 weeks" = from {date-28} to {today}). Instructs LLM to NOT use training data dates. Explicit instruction: "DO NOT reference dates earlier than 2026 for news queries."
 - 6 rules: Markdown only, inline citations [N], no fabrication, note missing coverage, clear headings.
-- Report structure template (6 sections).
+- Report structure template (6 sections): Executive Summary, Key Findings, Recent Developments, Academic Highlights, Limitations & Gaps, References.
 
 #### 7.2 Context Truncation
 
@@ -344,7 +443,9 @@ Contains:
 truncated = await self.llm.truncate_to_context(chunks, system_tokens, prompt_overhead_tokens, max_context, response_buffer)
 ```
 
-Fits chunks into LLM context window. Drops least-important chunks (already sorted by rank from reranker) to fit within available tokens.
+**File:** `llm/base.py`
+
+Fits chunks into LLM context window using tiktoken (`cl100k_base` encoding). Falls back to word-splitting if tiktoken unavailable. Drops least-important chunks (already sorted by rank from reranker) to fit within `max_context - system_tokens - overhead_tokens - response_buffer`.
 
 #### 7.3 Build Synthesis Prompt
 
@@ -365,22 +466,36 @@ Contains:
 async for token in self.llm.stream(user_prompt, system=system_prompt):
 ```
 
-**File:** `llm/local.py` or `llm/remote.py`
+**File:** `llm/local.py` or `llm/cloud.py`
 
-Local backend (`LocalLLM`):
+LLM selection via `create_llm(config)` in `llm/__init__.py`:
+
+- If `config.llm.mode == "cloud"` → `CloudLLM`
+- Else → `LocalLLM`
+
+**LocalLLM** (`llm/local.py`):
 - POST to `{base_url}/chat/completions` (OpenAI-compatible API on llama.cpp server)
 - Messages: `[{"role": "system", "content": system}, {"role": "user", "content": prompt}]`
 - Parameters: temperature, max_tokens, stream=True
 - Parses SSE stream, yields tokens as they arrive
 - Full prompt + response logged to console and log file
 
-Remote backend (`RemoteLLM`):
-- Same interface via `openai` Python client
-- Supports any OpenAI-compatible API (OpenAI, Anthropic via proxy, etc.)
+**CloudLLM** (`llm/cloud.py`):
+- Multi-provider fallback: tries `provider_order` in sequence
+- For each provider: builds `AsyncOpenAI` client with provider's `base_url` and `api_key`, sends a `max_tokens=1` ping
+- First provider to respond becomes the active provider for the session
+- Supported: nvidia, gemini, openrouter, huggingface, deepseek, openai, anthropic
+- Same streaming interface via `AsyncOpenAI` SDK
+- Raises `RuntimeError` if no provider available (with last error message)
+
+**RemoteLLM** (`llm/remote.py`): Exists but is **not** used by `create_llm()`. Legacy implementation for direct OpenAI-compatible API access.
 
 #### 7.5 Citation Parsing
 
-`_parse_citations(markdown, chunks)` — regex extracts `[N] Title — Source — URL` patterns from generated Markdown.
+`_parse_citations(markdown, chunks)` — regex extracts `[N] Title — Source — URL` patterns from generated Markdown:
+```python
+pattern = r'\[(\d+)\]\s+(.+?)\s+(?:—\s+)?(.+?)\s+(?:—\s+)?(https?://\S+)'
+```
 
 #### 7.6 Report Assembly
 
@@ -398,7 +513,11 @@ report.save(Path(config.output.reports_dir))
 
 - Report saved to `reports/{YYYYMMDD_HHMMSS}_{slug}.md`
 - Can also export JSON with `--export-json`
-- Stats table printed to console
+- Stats table printed to console, including:
+  - `total_results_fetched`, `total_chunks_extracted`, `cache_hits`, `chunks_after_rerank`
+  - Per-retriever latencies table
+  - Extraction, rerank, synthesis, total latencies
+  - LLM tokens used and backend name
 
 ---
 
@@ -408,35 +527,39 @@ report.save(Path(config.output.reports_dir))
 
 - **Async queue**: `log_queue: asyncio.Queue[LogEvent]`
 - **LogEvent**: `{level, module, message, timestamp, data, duration_ms}`
-- **Console output**: Rich-formatted to stderr: `[{time}] {LEVEL} {module} {message} ({duration})`
+- **Console output**: Rich-formatted to stderr: `[{time}] {LEVEL} {module} {message}`
 - **File output**: `FileLogWriter` drains queue to `logs/agent_YYYYMMDD.log` as JSON Lines
 
 ### Log Levels
 
 `DEBUG < INFO < WARNING < ERROR < SUCCESS`
 
-Configurable via `UI_LOG_LEVEL` env var or `config.ui.log_level`. Events below the threshold are still queued and written to file but not printed to console.
+Configurable via `LOG_LEVEL` env var or `config.log.log_level`. Events below the threshold are still queued and written to file but not printed to console.
 
 ### What Gets Logged (comprehensive)
 
 | Module | Event | Data |
 |--------|-------|------|
 | `startup` | Component validation results | — |
-| `pipeline` | Stage transitions, sub-queries, result counts | — |
+| `pipeline` | Stage transitions, sub-queries, result counts, per-result details | — |
 | `router` | Heuristic classification: mode, weights, confidence | — |
-| `duckckgo` | Per-query: sub-query text, timelimit, each result title+URL | — |
+| `duckduckgo` | Per-query: sub-query text, timelimit, each result title+URL | — |
 | `arxiv` | Per-query text, each paper title + published_at | — |
 | `semantic_scholar` | Per-query text, each paper title + published_at | — |
 | `hackernews` | Per-query text, each story title + author + created_at | — |
 | `rss` | Feed name, entry count, top 3 titles + dates | — |
 | `wikipedia` | Per-query text, each article title | — |
+| `github_search` | Per-query text, result count, latency | — |
+| `github_trending` | Fetch results | — |
+| `reddit` | Per-subreddit post count, latency | — |
 | `trafilatura` | URL, word count, latency | — |
 | `jina` | URL, word count, latency | — |
 | `readability` | URL, word count, latency | — |
 | `reranker` | Input query + doc titles, top 5 model scores, output ranked list with score breakdown (sem/fresh/auth/len), latency | — |
-| `llm` | **Full system prompt** + **full user prompt** + **full response** | `{system_prompt, user_prompt, response}` in JSON file |
+| `llm` | **Full system prompt** + **source overview** + **full response** | `{system_prompt, user_prompt, response}` in JSON file |
 | `cache` | Hit/miss counts | — |
 | `synthesis` | Token count, citations, latency | — |
+| `retry` | Retry attempts with delay | — |
 
 ---
 
@@ -460,6 +583,8 @@ Configurable via `UI_LOG_LEVEL` env var or `config.ui.log_level`. Events below t
                     │  weights     │
                     │  explanation │
                     │  classified_by│
+                    │  ("heuristic"│
+                    │   or "llm")  │
                     └──────┬───────┘
 ```
 
@@ -468,11 +593,13 @@ Configurable via `UI_LOG_LEVEL` env var or `config.ui.log_level`. Events below t
 ```
                     ┌──────────────┐
      Retrieval ────►│  RawResult   │
-                    │  id, title   │
-                    │  url, snippet│
+                    │  id (sha256) │
+                    │  title, url  │
+                    │  snippet     │
                     │  source      │
                     │  published_at│
                     │  authors, cat│
+                    │  raw_html?   │
                     └──────┬───────┘
                            │ extraction
                            ▼
@@ -520,11 +647,14 @@ Two-level SQLite cache:
 | Level | Table | Key | Value | TTL |
 |-------|-------|-----|-------|-----|
 | L1 (chunks) | `chunks` | `url` (PK) | `ExtractedChunk.model_dump_json()` | 24h |
-| L2 (reports) | `reports` | `sha256(query)` (PK) | `ResearchReport.model_dump_json()` | 6h |
+| L2 (reports) | `reports` | `sha256(lowercase(query))` (PK) | `ResearchReport.model_dump_json()` | 6h |
 
 - Concurrency-safe via aiosqlite
 - Stale entries deleted on read
 - `partition()` splits raw results into cache hits (skip extraction) and misses (need extraction)
+- `stats()` returns `{l1_entries, l2_entries}`
+- `clear()` deletes all rows from both tables
+- Entire cache disabled when `config.cache.enabled = False`
 
 ---
 
@@ -543,19 +673,19 @@ freshness_score(published_at):
 ### Authority
 Lookup table:
 
-| Source | Score |
-|--------|-------|
-| arxiv.org | 0.90 |
-| semantic_scholar | 0.88 |
+| Source Pattern | Score |
+|----------------|-------|
+| arxiv.org / semantic_scholar | 0.90 / 0.88 |
 | wikipedia.org | 0.80 |
-| deepmind.google | 0.78 |
-| openai.com | 0.78 |
+| deepmind.google / openai.com | 0.78 |
 | huggingface.co | 0.75 |
 | techcrunch.com | 0.60 |
 | venturebeat.com | 0.58 |
 | hackernews | 0.50 |
 | rss | 0.55 |
 | duckduckgo | 0.40 |
+
+Fallback for unknown domains: 0.45. Matches by domain substring.
 
 ### Length
 ```python
@@ -581,6 +711,7 @@ final = semantic × 0.55 + freshness × 0.20 + authority × 0.15 + length × 0.1
 ### Retry Decorator (`@with_retry`)
 - 3 retries with exponential backoff: `base_delay × 2^attempt`
 - Jitter: `delay × random(0.5, 1.0)`
+- Max delay: 30s
 - Non-retryable: 400, 401, 403, 404 (fail fast)
 - Retryable: 429, 500, 502, 503
 
@@ -614,7 +745,10 @@ Step 1: Router (router.py)
     Original: "top 5 ai news in last 4 weeks"
     Year suffix: "top 5 ai news in last 4 weeks 2026"
     Recent: "top 5 ai news in last 4 weeks recent"
-    Total 3 sub-queries (deduplicated)
+    Domain: "top 5 ai news in last 4 weeks machine learning"
+    Domain: "top 5 ai news in last 4 weeks AI research"
+    Domain: "top 5 ai news in last 4 weeks deep learning"
+    Total 3 sub-queries (5 after domain dedup)
 
 
 Step 2: Pipeline (pipeline.py)
@@ -622,6 +756,7 @@ Step 2: Pipeline (pipeline.py)
   Active retrievers for "general" mode:
     DuckDuckGo, HackerNews, RSS, Wikipedia
     (arXiv & SemanticScholar excluded — academic only)
+    No software keywords → GitHub/Reddit not injected
 
   Temporal keywords detected → DuckDuckGo timelimit='m'
   (month, not year)
@@ -646,7 +781,7 @@ Step 4: HackerNews (hackernews.py)
 
 Step 5: RSS (rss.py)
 ─────────────────────
-  Parses 7 RSS feeds, scores entries by keyword relevance
+  Parses 11 RSS feeds, scores entries by keyword relevance
   Returns: title, link, summary, published date
 
 
@@ -728,6 +863,8 @@ Step 11: Synthesis (synthesizer.py)
      Generate the report now:"
   
   LLM.stream(prompt, system=system_prompt)
+    If mode="local": POST to llama.cpp /chat/completions SSE
+    If mode="cloud": AsyncOpenAI SDK streaming → first available provider
     Messages: [system + user]
     Streams tokens, logs progress every 50 tokens
 
@@ -736,12 +873,63 @@ Step 12: Output
 ────────────────
   ResearchReport saved to reports/20260517_164307_top-5-ai-news-in-last-4-weeks..md
   Cache updated
-  Statistics displayed
+  Statistics displayed (latency breakdown, per-retriever table)
 ```
 
 ---
 
-## 12. Date Sensitivity System-wide Summary
+## 12. LLM Backend Selection (llm/__init__.py)
+
+```python
+def create_llm(config: AppConfig) -> BaseLLM:
+    if config.llm.mode == "cloud":
+        return CloudLLM(config)     # Multi-provider fallback
+    return LocalLLM(config.llm)     # Local llama.cpp server
+```
+
+### LocalLLM (llm/local.py)
+- Connects to `{base_url}/chat/completions` (OpenAI-compatible)
+- Uses httpx AsyncClient with 120s timeout
+- SSE streaming with `[DONE]` termination
+- Token counting via tiktoken
+
+### CloudLLM (llm/cloud.py)
+- Iterates `provider_order` list at init
+- Pings each provider with `max_tokens=1` to verify availability
+- First available provider becomes active for session
+- Supported: nvidia, gemini, openrouter, huggingface, deepseek, openai, anthropic
+- API key resolution: `PROVIDER_API_KEY_MAP` → `config.api_keys.*` → env vars
+- `RuntimeError` if no provider available
+
+### RemoteLLM (llm/remote.py) — Legacy/Unused
+- Direct OpenAI-compatible API via `AsyncOpenAI` client
+- NOT instantiated by `create_llm()`; kept for backward compatibility
+
+---
+
+## 13. Software Query Detection (pipeline.py)
+
+The pipeline injects software-priority retrievers when a query contains software development keywords:
+
+```python
+SOFTWARE_KEYWORDS = {
+    "software", "code", "library", "framework", "api", "sdk",
+    "tool", "cli", "implementation", "docker", "kubernetes",
+    "package", "repository", "repo", "npm", "pip", "cargo",
+    "programming", "language", "compiler", "debugger",
+    "plugin", "extension", "middleware", "backend", "frontend",
+    "database", "orm", "rest", "graphql", "websocket",
+    "deploy", "devops", "ci/cd",
+}
+
+SOFTWARE_PRIORITY_SOURCES = {"github_search", "github_trending", "hackernews", "reddit"}
+```
+
+`Pipeline._is_software_query()` performs a substring check (not exact token match), so "kubernetes" matches "kubernetes" anywhere in the query string.
+
+---
+
+## 14. Date Sensitivity System-wide Summary
 
 Every point in the pipeline that respects the system date:
 
@@ -749,12 +937,13 @@ Every point in the pipeline that respects the system date:
 |-----------|-------------|------|
 | `_decompose_query()` | Uses `datetime.now().year` for year suffix | `router/router.py:123` |
 | `DuckDuckGoRetriever.fetch()` | Detects temporal queries → `timelimit='m'` | `retrievers/duckduckgo.py` |
-| `_filter_by_date()` | Drops results with `published_at.year < current_year` | `pipeline.py:183` |
+| `_filter_by_date()` | Drops results with `published_at.year < current_year` | `pipeline.py` |
 | `freshness_score()` | `datetime.now(UTC)` for recency scoring | `reranker/scorer.py:22` |
-| `build_system_prompt()` | `datetime.now().strftime("%B %d, %Y")` + explicit date rules | `synthesis/prompts.py:7-25` |
+| `build_system_prompt()` | `datetime.now().strftime("%B %d, %Y")` + explicit date rules | `synthesis/prompts.py:7-54` |
 | `build_synthesis_prompt()` | `Current date: {today}` in user prompt | `synthesis/prompts.py` |
-| `build_classification_prompt()` | `Current date: {today}` | `synthesis/prompts.py:79` |
+| `build_classification_prompt()` | `Current date: {today}` | `synthesis/prompts.py:98` |
 | `LocalLLM._build_messages()` | Sends `system` message with date instructions to model | `llm/local.py:32-37` |
-| `ResearchReport.generated_at` | `datetime.now()` | `synthesis/synthesizer.py:96` |
+| `CloudLLM` | Sends system+user messages to cloud provider | `llm/cloud.py` |
+| `ResearchReport.generated_at` | `datetime.now()` | `synthesis/synthesizer.py:114` |
 | `LogEvent.timestamp` | `datetime.now()` | `logger.py:31` |
 | `FileLogWriter._current_path()` | `datetime.now().strftime("%Y%m%d")` | `logger.py:125` |

@@ -17,23 +17,21 @@ class SemanticScholarRetriever(BaseRetriever):
         super().__init__(*args, **kwargs)
         self._client = sch.SemanticScholar()
 
-    async def fetch(self, queries: list[str], max_results: int = 15) -> list[RawResult]:
+    async def fetch(
+        self, queries: list[str], max_results: int = 15, time_window: str = "all"
+    ) -> list[RawResult]:
         if self._is_circuit_open():
             await log_info("semantic_scholar", "Circuit breaker open, skipping")
             return []
 
-        seen: set[str] = set()
-        results: list[RawResult] = []
-
-        for query in queries:
-            batch = await self._search(query, max_results)
-            for r in batch:
-                if r.id not in seen:
-                    seen.add(r.id)
-                    results.append(r)
+        per_query = max(2, max_results // max(len(queries), 1))
+        tasks = [self._search(q, per_query) for q in queries]
+        nested = await asyncio.gather(*tasks, return_exceptions=True)
+        results = [r for batch in nested if isinstance(batch, list) for r in batch]
+        deduped = self._deduplicate(results)
 
         self._record_success()
-        return results
+        return deduped[:max_results]
 
     @with_retry()
     async def _search(self, query: str, max_results: int) -> list[RawResult]:
@@ -63,6 +61,9 @@ class SemanticScholarRetriever(BaseRetriever):
         latency = (time.perf_counter() - t0) * 1000
         await log_info("semantic_scholar", f"Query: \"{query[:80]}\"")
         for i, r in enumerate(batch):
-            await log_info("semantic_scholar", f"  #{i+1}: \"{r.title[:70]}\" | published={r.published_at}")
+            await log_info(
+                "semantic_scholar",
+                f"  #{i+1}: \"{r.title[:70]}\" | published={r.published_at}",
+            )
         await log_info("semantic_scholar", f"Total: {len(batch)} papers in {fmt_ms(latency)}")
         return batch
