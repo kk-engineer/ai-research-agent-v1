@@ -4,10 +4,10 @@ import time
 import httpx
 
 from agent.config import AppConfig
+from agent.logger import fmt_ms, log_info
 from agent.models.result import ExtractedChunk, ScoredChunk
 from agent.reranker.base import BaseReranker
 from agent.reranker.scorer import authority_score, freshness_score, length_score
-from agent.logger import fmt_ms, log_info
 
 
 class ServerReranker(BaseReranker):
@@ -29,7 +29,13 @@ class ServerReranker(BaseReranker):
         documents = [c.content_markdown[:512] for c in chunks]
         weights = self.config.reranker.weights
 
-        await log_info("reranker", f"Input: query=\"{query}\" | {len(chunks)} documents | top_k={top_k}")
+        doc_titles = " | ".join(
+            f"[{i}] {c.title[:60]}" for i, c in enumerate(chunks[:10])
+        )
+        if len(chunks) > 10:
+            doc_titles += f" | ... and {len(chunks) - 10} more"
+        await log_info("reranker", f"Input: query=\"{query}\" | {len(chunks)} docs | top_k={top_k}")
+        await log_info("reranker", f"Input documents: {doc_titles}")
 
         payload = {"query": query, "documents": documents}
         if self.config.reranker.model:
@@ -87,9 +93,15 @@ class ServerReranker(BaseReranker):
         top = scored[:top_k]
         latency = (time.perf_counter() - t0) * 1000
 
-        top_summary = ", ".join(
-            f"#{c.rank} {c.title[:40]} ({c.final_score:.4f})" for c in top[:5]
+        top_details = "\n".join(
+            f"  #{c.rank} | {c.final_score:.4f} | sem:{c.semantic_score:.4f} fresh:{c.freshness_score:.4f} "
+            f"auth:{c.authority_score:.4f} len:{c.length_score:.4f} | {c.title[:60]}"
+            for c in top[:10]
         )
-        await log_info("reranker", f"Output: {len(top)} chunks ranked | top: {top_summary} | {fmt_ms(latency)}")
+        await log_info("reranker", f"Output: {len(top)} chunks ranked | {fmt_ms(latency)}")
+        await log_info(
+            "reranker",
+            f"Top {min(len(top), 10)}:\n{top_details}",
+        )
 
         return top

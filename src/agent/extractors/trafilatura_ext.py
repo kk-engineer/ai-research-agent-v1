@@ -6,8 +6,8 @@ import httpx
 import trafilatura
 
 from agent.extractors.base import BaseExtractor
-from agent.models.result import ExtractedChunk
 from agent.logger import fmt_ms, log_info, log_warning
+from agent.models.result import ExtractedChunk
 
 
 class TrafilaturaExtractor(BaseExtractor):

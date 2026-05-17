@@ -81,6 +81,9 @@ cp config.example.toml config.toml
 
 Edit `config.toml`:
 - Set `model_path` to point to your downloaded GGUF file
+- Reranker: two modes under `[reranker]`
+  - `mode = "local"` — Connects to a local reranker server at `base_url` (default: `http://localhost:8002`)
+  - `mode = "cloud"` — Downloads the reranker model from HuggingFace (uses `model` field)
 - Optionally set API keys for enhanced functionality
   - `[api_keys] openai_api_key` — for remote LLM fallback
   - `[api_keys] semantic_scholar_api_key` — for higher rate limits

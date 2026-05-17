@@ -3,7 +3,7 @@ import sys
 import httpx
 
 from agent.config import AppConfig
-from agent.embeddings import ServerEmbedder, SentenceTransformerEmbedder
+from agent.embeddings import ServerEmbedder
 from agent.llm import create_llm
 from agent.logger import log_error, log_info, log_success, log_warning
 
@@ -21,7 +21,7 @@ async def validate_connectivity(config: AppConfig) -> None:
         llm = create_llm(config)
         response = await llm.complete("Respond with exactly 'OK'.")
         if "ok" in response.lower():
-            await log_success("startup", f"LLM ({config.llm.backend}) verified")
+            await log_success("startup", f"LLM ({config.llm.mode}) verified")
         else:
             await log_warning("startup", f"LLM responded unexpectedly: {response.strip()}")
     except SystemExit:
@@ -43,9 +43,23 @@ async def validate_connectivity(config: AppConfig) -> None:
     await log_info("startup", "Checking embeddings...")
     try:
         if config.embeddings.base_url:
-            embedder = ServerEmbedder(config.embeddings.base_url, config.embeddings.model)
+            embedder = ServerEmbedder(
+                config.embeddings.base_url, config.embeddings.model
+            )
             await embedder.embed("connectivity verification")
-            await log_success("startup", f"Embeddings (server @ {config.embeddings.base_url}) verified")
+            await log_success(
+                "startup",
+                f"Embeddings (server @ {config.embeddings.base_url}) verified",
+            )
+        elif config.embeddings.mode == "cloud" and config.embeddings.cloud.base_url:
+            embedder = ServerEmbedder(
+                config.embeddings.cloud.base_url, config.embeddings.cloud.model
+            )
+            await embedder.embed("connectivity verification")
+            await log_success(
+                "startup",
+                f"Embeddings (cloud @ {config.embeddings.cloud.base_url}) verified",
+            )
         else:
             await log_warning("startup", "Embeddings: no base_url configured, skipping check")
     except Exception as e:
@@ -53,20 +67,18 @@ async def validate_connectivity(config: AppConfig) -> None:
 
     await log_info("startup", "Checking reranker...")
     try:
-        if config.reranker.backend == "remote":
+        if config.reranker.mode == "local":
             from agent.reranker.server import ServerReranker
 
             reranker = ServerReranker(config)
             await reranker.rank([], "connectivity verification", 0)
-            await log_success("startup", f"Reranker (remote @ {config.reranker.base_url}) verified")
-        elif config.reranker.backend == "local":
+            await log_success("startup", f"Reranker (local server @ {config.reranker.base_url}) verified")
+        else:
             from agent.reranker.cross_encoder import CrossEncoderReranker
 
             reranker = CrossEncoderReranker(config)
             await reranker._load_model()
-            await log_success("startup", "Reranker (local cross-encoder) verified")
-        else:
-            await log_warning("startup", "Reranker: no backend configured, skipping check")
+            await log_success("startup", "Reranker (cloud model from HuggingFace) verified")
     except SystemExit:
         await log_error("startup", "Reranker verification failed")
         raise

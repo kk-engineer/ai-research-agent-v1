@@ -4,9 +4,9 @@ from typing import Any
 
 import arxiv
 
+from agent.logger import fmt_ms, log_info
 from agent.models.result import RawResult
 from agent.retrievers.base import BaseRetriever, with_retry
-from agent.logger import fmt_ms, log_info
 
 
 class ArxivRetriever(BaseRetriever):

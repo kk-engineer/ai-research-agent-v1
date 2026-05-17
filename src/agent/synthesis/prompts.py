@@ -7,7 +7,6 @@ def build_system_prompt() -> str:
     now = datetime.now()
     today = now.strftime("%B %d, %Y")
     current_year = now.year
-    current_month = now.month
     return (
         "You are an expert AI/ML research analyst. Your task is to synthesise "
         "information from multiple sources into a clear, well-structured "

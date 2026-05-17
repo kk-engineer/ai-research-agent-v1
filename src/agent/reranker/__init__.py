@@ -1,7 +1,7 @@
 from .base import BaseReranker
 from .cross_encoder import CrossEncoderReranker
-from .server import ServerReranker
 from .scorer import AUTHORITY_SCORES, authority_score, freshness_score, length_score
+from .server import ServerReranker
 
 __all__ = [
     "BaseReranker",

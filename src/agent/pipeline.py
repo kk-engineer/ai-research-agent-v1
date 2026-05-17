@@ -11,6 +11,7 @@ from agent.extractors.jina import JinaExtractor
 from agent.extractors.readability_ext import ReadabilityExtractor
 from agent.extractors.trafilatura_ext import TrafilaturaExtractor
 from agent.llm import create_llm
+from agent.logger import fmt_ms, log_error, log_info, log_success
 from agent.models.query import RouterDecision, UserQuery
 from agent.models.report import PipelineStats, ResearchReport
 from agent.models.result import RawResult
@@ -27,7 +28,6 @@ from agent.retrievers import (
 )
 from agent.router import QueryRouter
 from agent.synthesis import Synthesizer
-from agent.logger import fmt_ms, log_error, log_info, log_success
 
 
 class Pipeline:
@@ -36,7 +36,7 @@ class Pipeline:
         self.router = QueryRouter(config)
         self.cache = AsyncCache(config)
         self.extractors = self._build_extractors()
-        if config.reranker.backend == "remote":
+        if config.reranker.mode == "local":
             self.reranker = ServerReranker(config)
         else:
             self.reranker = CrossEncoderReranker(config)
@@ -95,8 +95,11 @@ class Pipeline:
         active = self._active_retrievers(decision)
         await log_info("pipeline", f"Retrieval starting — {len(active)} active retrievers")
 
-        TEMPORAL_KEYWORDS = {"last", "recent", "latest", "this week", "this month", "past week", "past month", "upcoming", "new"}
-        is_temporal = any(kw in query.raw.lower() for kw in TEMPORAL_KEYWORDS)
+        temporal_keywords = {
+            "last", "recent", "latest", "this week", "this month",
+            "past week", "past month", "upcoming", "new",
+        }
+        is_temporal = any(kw in query.raw.lower() for kw in temporal_keywords)
 
         retriever_latencies: dict[str, float] = {}
         retriever_tasks = []
@@ -114,14 +117,17 @@ class Pipeline:
                 asyncio.gather(*retriever_tasks, return_exceptions=True),
                 timeout=gather_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await log_error("pipeline", f"Retrieval phase timed out after {gather_timeout}s")
             raw_nested = []
         raw_results = self._flatten_deduplicate(raw_nested)
         raw_results = await self._filter_by_date(raw_results, decision.mode)
         await log_info("pipeline", f"Retrieval done: {len(raw_results)} unique results")
         for r in raw_results[:5]:
-            await log_info("pipeline", f"  Result: \"{r.title[:80]}\" | {r.source} | date={r.published_at}")
+            await log_info(
+                "pipeline",
+                f"  Result: \"{r.title[:80]}\" | {r.source} | date={r.published_at}",
+            )
 
         cache_hits, misses = await self.cache.partition(raw_results)
         await log_info(
@@ -166,7 +172,7 @@ class Pipeline:
                 report.stats.llm_tokens_used
                 if hasattr(report.stats, "llm_tokens_used") else 0
             ),
-            llm_backend=self.config.llm.backend,
+            llm_backend=self.config.llm.mode,
         )
 
         await self.cache.set_report(query.raw, report)
@@ -196,7 +202,7 @@ class Pipeline:
             latencies[retriever.name] = latency
             await log_info(retriever.name, f"Fetched {len(results)} results in {fmt_ms(latency)}")
             return results
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency = (time.perf_counter() - t0) * 1000
             latencies[retriever.name] = latency
             await log_error(retriever.name, f"Timeout after {timeout}s ({fmt_ms(latency)})")
@@ -217,7 +223,10 @@ class Pipeline:
                 continue
             filtered.append(r)
         if dropped:
-            await log_info("pipeline", f"Filtered {dropped} results from before {current_year} (mode: {mode})")
+            await log_info(
+                "pipeline",
+                f"Filtered {dropped} results from before {current_year} (mode: {mode})",
+            )
         return filtered
 
     def _flatten_deduplicate(self, nested: list[Any]) -> list[RawResult]:

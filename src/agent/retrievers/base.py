@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Literal
 
-from agent.models.result import RawResult
 from agent.logger import log_warning
+from agent.models.result import RawResult
 
 
 @dataclass

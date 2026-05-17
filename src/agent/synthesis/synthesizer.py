@@ -5,11 +5,11 @@ from typing import Any
 
 from agent.config import AppConfig
 from agent.llm.base import BaseLLM
+from agent.logger import fmt_ms, log_debug, log_info, log_success
 from agent.models.query import RouterDecision, UserQuery
 from agent.models.report import Citation, PipelineStats, ResearchReport
 from agent.models.result import ScoredChunk
 from agent.synthesis.prompts import build_synthesis_prompt, build_system_prompt
-from agent.logger import fmt_ms, log_info, log_success, log_debug
 
 
 class Synthesizer:
@@ -52,7 +52,7 @@ class Synthesizer:
 
         await log_info(
             "llm",
-            f"Synthesis starting — {len(truncated)} chunks, {self.config.llm.backend} backend",
+            f"Synthesis starting — {len(truncated)} chunks, {self.config.llm.mode} backend",
         )
 
         await log_info("llm", "=== SYSTEM PROMPT ===")
@@ -108,7 +108,7 @@ class Synthesizer:
             synthesis_latency=round(synthesis_latency, 2),
             total_latency=round(synthesis_latency, 2),
             llm_tokens_used=token_count,
-            llm_backend=self.config.llm.backend,
+            llm_backend=self.config.llm.mode,
         )
 
         report = ResearchReport(

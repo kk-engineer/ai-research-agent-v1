@@ -59,7 +59,7 @@ All configuration lives in `config.toml` (copy from `config.example.toml`). See 
 Key sections:
 - `[llm]` — Backend (`local`/`remote`), model path, context window, temperature
 - `[retrievers]` — Enabled sources, max results per source, RSS feed URLs
-- `[reranker]` — Top-K, weights for semantic/freshness/authority/length scoring
+- `[reranker]` — Mode (`local` = connect to local server at `base_url`, `cloud` = download from HuggingFace), Top-K, weights for semantic/freshness/authority/length scoring
 - `[cache]` — SQLite cache TTLs for chunks and reports
 - `[timeouts]` — Per-retriever timeout (`retriever_s`), extraction, LLM streaming
 

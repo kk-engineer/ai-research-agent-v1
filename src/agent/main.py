@@ -219,15 +219,15 @@ def health():
             response = await llm.complete("Respond with exactly 'OK'.")
             if "ok" in response.lower():
                 console.print(
-                    f"  [green]✔ LLM ({cfg.llm.backend})[/green] — responded: {response.strip()}"
+                    f"  [green]✔ LLM ({cfg.llm.mode})[/green] — responded: {response.strip()}"
                 )
             else:
                 console.print(
-                    f"  [yellow]⚠ LLM ({cfg.llm.backend})[/yellow] — "
+                    f"  [yellow]⚠ LLM ({cfg.llm.mode})[/yellow] — "
                     f"unexpected response: {response.strip()}"
                 )
         except Exception as e:
-            console.print(f"  [red]✖ LLM ({cfg.llm.backend})[/red] — {e}")
+            console.print(f"  [red]✖ LLM ({cfg.llm.mode})[/red] — {e}")
 
     from agent.llm import create_llm
 

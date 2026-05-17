@@ -5,8 +5,8 @@ from typing import Any
 import tiktoken
 
 from agent.config import AppConfig
-from agent.models.result import ScoredChunk
 from agent.logger import log_info
+from agent.models.result import ScoredChunk
 
 
 class BaseLLM(ABC):
@@ -57,9 +57,9 @@ class BaseLLM(ABC):
 
 
 def create_llm(config: AppConfig) -> BaseLLM:
+    from agent.llm.cloud import CloudLLM
     from agent.llm.local import LocalLLM
-    from agent.llm.remote import RemoteLLM
 
-    if config.llm.backend == "remote":
-        return RemoteLLM(config)
+    if config.llm.mode == "cloud":
+        return CloudLLM(config)
     return LocalLLM(config.llm)

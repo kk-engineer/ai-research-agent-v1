@@ -18,7 +18,7 @@ User Query (CLI or Shell)
   │  - validate_connectivity()                           │
   │    ├── LLM check (complete with "Respond with 'OK'") │
   │    ├── Embeddings check (server or sentence-trans.)  │
-  │    └── Reranker check (local cross-encoder or API)   │
+  │    └── Reranker check (local server or HF model)     │
   └──────────────────────┬───────────────────────────────┘
                          │
                          ▼
@@ -30,7 +30,7 @@ User Query (CLI or Shell)
   │   2. CACHE    ───►  AsyncCache.get_report()          │
   │   3. RETRIEVE ───►  6 retrievers in parallel         │
   │   4. EXTRACT  ───►  ExtractorChain.extract_all()     │
-  │   5. RERANK   ───►  CrossEncoderReranker / Server    │
+  │   5. RERANK   ───►  ServerReranker / CrossEncoder    │
   │   6. SYNTHESIZE ─►  Synthesizer.run()                │
   │   7. CACHE    ───►  AsyncCache.set_report()          │
   │   8. SAVE     ───►  ResearchReport.save()            │
@@ -103,8 +103,10 @@ AppConfig
 ├── extractors: ExtractorConfig (chunk_size_words, concurrency)
 ├── reranker: RerankerConfig
 │   ├── top_k (default 20)
-│   ├── backend: "local" | "remote"
-│   ├── base_url + model
+│   ├── mode: "local" | "cloud"
+│   │   ├── "local" → ServerReranker (connects to local server at base_url)
+│   │   └── "cloud" → CrossEncoderReranker (downloads from HuggingFace)
+│   ├── base_url (localhost for local, empty cloud)
 │   └── weights: semantic=0.55, freshness=0.20, authority=0.15, length=0.10
 ├── cache: CacheConfig (SQLite DB path + TTLs)
 ├── timeouts: TimeoutConfig (retriever, extractor, LLM)
@@ -123,7 +125,7 @@ AppConfig
 
 1. **LLM**: Sends `"Respond with exactly 'OK'."` via `llm.complete()`. Exits with code 1 if unreachable.
 2. **Embeddings**: Pings server embedder or sentence-transformer. Warning only on failure.
-3. **Reranker**: Loads cross-encoder model or pings remote API. Warning only on failure.
+3. **Reranker**: If `mode == "local"` pings the local reranker server at `base_url`; if `mode == "cloud"` loads the cross-encoder model from HuggingFace. Warning only on failure.
 
 ---
 
@@ -272,29 +274,47 @@ Fresh chunks are written to cache: `await self.cache.set_chunk(chunk.url, chunk)
 scored = await self.reranker.rank(all_chunks, query.raw, top_k)
 ```
 
-**File:** `reranker/cross_encoder.py` or `reranker/server.py`
+**File:** `reranker/server.py` or `reranker/cross_encoder.py`
 
-Two backends:
+Two modes, selected via `reranker.mode` in config:
 
-#### Local (CrossEncoderReranker)
-- Loads `cross-encoder/ms-marco-MiniLM-L-6-v2` via `sentence-transformers`
+#### Local Mode — ServerReranker (`reranker.mode = "local"`)
+- Connects to a locally running reranker server at `base_url` (e.g. `http://localhost:8002`)
+- POSTs to `{base_url}/rerank` with `{query, documents}`
+- Expects `{results: [{index, relevance_score}]}`
+- Use this when you have a reranker model served behind an API (e.g. llama.cpp server, custom FastAPI endpoint)
+
+#### Cloud Mode — CrossEncoderReranker (`reranker.mode = "cloud"`)
+- Downloads the model from HuggingFace via `sentence-transformers.CrossEncoder` (default: `cross-encoder/ms-marco-MiniLM-L-6-v2`)
 - Creates query-document pairs `(query, chunk.content[:512])`
-- Predicts relevance scores
-- Computes composite score:
+- Predicts relevance scores locally
+- Use this when you want the reranker to run locally without a separate server process
+
+Both modes compute the same composite score:
 
 ```
 final = semantic × 0.55 + freshness × 0.20 + authority × 0.15 + length × 0.10
 ```
 
 Where:
-- **semantic**: sigmoid of cross-encoder score
+- **semantic**: sigmoid of raw model score
 - **freshness**: `1 / (1 + days_old / 30)` — decays over time, 0.5 for unknown
 - **authority**: from lookup table (arxiv=0.90, openai=0.78, techcrunch=0.60, duckduckgo=0.40, etc.)
 - **length**: `min(1.0, word_count / 300)` — rewards substantive content
 
-#### Remote (ServerReranker)
-- POSTs to `{base_url}/rerank` with `{query, documents}`
-- Expects `{results: [{index, relevance_score}]}`
+#### Logging
+
+Both modes log the same structured output:
+
+```
+[HH:MM:SS] INFO  reranker      Input: query="<query>" | 42 docs | top_k=20
+[HH:MM:SS] INFO  reranker      Input documents: [0] Attention Is All You Need | [1] BERT: Pre-training... | ... and 32 more
+[HH:MM:SS] INFO  reranker      Model scores (top 5): [0] 0.9821 | [1] 0.8743 | [2] 0.6512 | [3] 0.4321 | [4] 0.2109
+[HH:MM:SS] INFO  reranker      Output: 20 chunks ranked | 1.23s
+[HH:MM:SS] INFO  reranker      Top 10:
+  #1 | 0.8934 | sem:0.7301 fresh:0.8713 auth:0.9000 len:1.0000 | Attention Is All You Need
+  #2 | 0.8211 | sem:0.6512 fresh:0.9210 auth:0.8800 len:0.9500 | BERT: Pre-training of Deep Bidirectional...
+```
 
 Output: `top_k` `ScoredChunk` objects with `semantic_score`, `freshness_score`, `authority_score`, `length_score`, `final_score`, `rank`.
 
@@ -413,7 +433,7 @@ Configurable via `UI_LOG_LEVEL` env var or `config.ui.log_level`. Events below t
 | `trafilatura` | URL, word count, latency | — |
 | `jina` | URL, word count, latency | — |
 | `readability` | URL, word count, latency | — |
-| `reranker` | Input count, top 5 scores, output rankings | — |
+| `reranker` | Input query + doc titles, top 5 model scores, output ranked list with score breakdown (sem/fresh/auth/len), latency | — |
 | `llm` | **Full system prompt** + **full user prompt** + **full response** | `{system_prompt, user_prompt, response}` in JSON file |
 | `cache` | Hit/miss counts | — |
 | `synthesis` | Token count, citations, latency | — |
@@ -658,16 +678,31 @@ Step 9: Extraction (extractors/)
 
 Step 10: Reranking (reranker/)
 ────────────────────────────────
-  CrossEncoderReranker.rank(chunks, query, top_k=20)
+  # Mode depends on config.reranker.mode:
+  #   "local"  → ServerReranker (POST to base_url/rerank)
+  #   "cloud"  → CrossEncoderReranker (load HF model locally)
   
+  reranker.rank(chunks, query, top_k=20)
+  
+  Logs:
+    Input: query="top 5 ai news in last 4 weeks" | 35 docs | top_k=20
+    Input documents: [0] AI Startup Raises $500M ... | [1] New RLHF Technique ...
+    
   For each chunk:
-    semantic = sigmoid(cross_encoder.predict(query, chunk.content))
+    semantic = sigmoid(model_score[chunk])
     freshness = freshness_score(chunk.metadata.get("published_at"))
     authority = authority_score(source, url)
     length = length_score(chunk.word_count)
     final = semantic×0.55 + freshness×0.20 + authority×0.15 + length×0.10
   
   Sort by final_score, keep top 20, assign rank 1-20
+  
+  Logs:
+    Model scores (top 5): [0] 0.9821 | [1] 0.8743 | [2] 0.6512 ...
+    Output: 20 chunks ranked | 1.23s
+    Top 10:
+      #1 | 0.8934 | sem:0.7301 fresh:0.8713 auth:0.9000 len:1.0000 | AI Startup Raises $500M
+      #2 | 0.8211 | sem:0.6512 fresh:0.9210 auth:0.8800 len:0.9500 | New RLHF Technique ...
 
 
 Step 11: Synthesis (synthesizer.py)

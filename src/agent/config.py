@@ -17,23 +17,75 @@ class LLMRemoteConfig(BaseModel):
     model: str = Field(default="gpt-4o-mini", description="Remote model name")
 
 
-class LLMConfig(BaseModel):
-    backend: str = Field(default="local", description='"local" | "remote"')
-    base_url: str = Field(
-        default="http://localhost:8000/v1", description="LLM API base URL"
+class LLMProviderConfig(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
+class LLMCloudConfig(BaseModel):
+    timeout: int = Field(default=60, description="Per-provider timeout in seconds")
+    provider_order: list[str] = Field(
+        default=[
+            "nvidia", "gemini", "openrouter", "huggingface",
+            "deepseek", "openai", "anthropic",
+        ]
     )
+    nvidia: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://integrate.api.nvidia.com/v1",
+        model="meta/llama-3.1-8b-instruct",
+    ))
+    gemini: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        model="gemini-2.0-flash",
+    ))
+    openrouter: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://openrouter.ai/api/v1",
+        model="google/gemini-2.0-flash-lite-preview-02-05:free",
+    ))
+    huggingface: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://api-inference.huggingface.co/v1",
+        model="mistralai/Mistral-7B-Instruct-v0.3",
+    ))
+    deepseek: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+    ))
+    openai: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o-mini",
+    ))
+    anthropic: LLMProviderConfig = Field(default_factory=lambda: LLMProviderConfig(
+        base_url="https://api.anthropic.com/v1",
+        model="claude-3-haiku-20240307",
+    ))
+
+
+class LLMConfig(BaseModel):
+    mode: str = Field(default="local", description='"local" | "cloud"')
+    base_url: str = Field(default="http://localhost:8000/v1", description="LLM API base URL")
     model: str = Field(default="mistral-nemo-12b", description="LLM model name")
     n_ctx: int = Field(default=8192, description="Context window size in tokens")
     temperature: float = Field(default=0.3, description="Sampling temperature")
     max_tokens: int = Field(default=2048, description="Max tokens in response")
     response_buffer: int = Field(default=1024, description="Tokens reserved for response")
     remote: LLMRemoteConfig = Field(default_factory=LLMRemoteConfig)
+    cloud: LLMCloudConfig = Field(default_factory=LLMCloudConfig)
+
+
+class EmbeddingCloudConfig(BaseModel):
+    base_url: str = Field(default="https://api.openai.com/v1")
+    api_key: str = ""
+    model: str = Field(default="text-embedding-3-small")
 
 
 class EmbeddingsConfig(BaseModel):
-    backend: str = Field(default="local", description='"local" (llama.cpp server) | "sentence_transformer"')
-    base_url: str = Field(default="http://localhost:8001/v1", description="Embedding server base URL")
+    mode: str = Field(default="local", description='"local" | "cloud"')
+    base_url: str = Field(
+        default="http://localhost:8001/v1", description="Embedding server base URL"
+    )
     model: str = Field(default="nomic-embed-text-v1.5", description="Embedding model name")
+    cloud: EmbeddingCloudConfig = Field(default_factory=EmbeddingCloudConfig)
 
 
 class RSSFeedsConfig(BaseModel):
@@ -69,12 +121,19 @@ class RerankerWeightsConfig(BaseModel):
     length: float = Field(default=0.10, ge=0.0, le=1.0)
 
 
+class RerankerCloudConfig(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
 class RerankerConfig(BaseModel):
+    mode: str = Field(default="local", description='"local" | "cloud"')
     top_k: int = Field(default=20, description="Number of chunks to keep after reranking")
-    backend: str = Field(default="local", description='"local" (sentence-transformers) | "remote" (API)')
-    base_url: str = Field(default="", description="Reranker API base URL (for remote backend)")
+    base_url: str = Field(default="", description="Reranker API base URL")
     model: str = Field(default="", description="Reranker model name or path")
     weights: RerankerWeightsConfig = Field(default_factory=RerankerWeightsConfig)
+    cloud: RerankerCloudConfig = Field(default_factory=RerankerCloudConfig)
 
 
 class CacheConfig(BaseModel):
@@ -100,6 +159,12 @@ class APIKeyConfig(BaseModel):
     semantic_scholar_api_key: str = Field(default="")
     openai_api_key: str = Field(default="")
     jina_api_key: str = Field(default="")
+    nvidia_api_key: str = Field(default="")
+    gemini_api_key: str = Field(default="")
+    openrouter_api_key: str = Field(default="")
+    huggingface_api_key: str = Field(default="")
+    deepseek_api_key: str = Field(default="")
+    anthropic_api_key: str = Field(default="")
 
 
 class AppConfig(BaseModel):
@@ -111,23 +176,29 @@ class AppConfig(BaseModel):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     timeouts: TimeoutConfig = Field(default_factory=TimeoutConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
-    ui: UIConfig = Field(default_factory=UIConfig)
+    log: UIConfig = Field(default_factory=UIConfig)
     api_keys: APIKeyConfig = Field(default_factory=APIKeyConfig)
 
 
 def _apply_env_overrides(config: AppConfig) -> AppConfig:
-    """Override config values from environment variables."""
     env_map = {
         "OPENAI_API_KEY": ("api_keys", "openai_api_key"),
         "SEMANTIC_SCHOLAR_API_KEY": ("api_keys", "semantic_scholar_api_key"),
         "JINA_API_KEY": ("api_keys", "jina_api_key"),
+        "NVIDIA_API_KEY": ("api_keys", "nvidia_api_key"),
+        "GEMINI_API_KEY": ("api_keys", "gemini_api_key"),
+        "OPENROUTER_API_KEY": ("api_keys", "openrouter_api_key"),
+        "HUGGINGFACE_API_KEY": ("api_keys", "huggingface_api_key"),
+        "DEEPSEEK_API_KEY": ("api_keys", "deepseek_api_key"),
+        "ANTHROPIC_API_KEY": ("api_keys", "anthropic_api_key"),
+        "LLM_MODE": ("llm", "mode"),
         "LLM_BASE_URL": ("llm", "base_url"),
         "LLM_MODEL": ("llm", "model"),
-        "LLM_BACKEND": ("llm", "backend"),
         "LLM_N_CTX": ("llm", "n_ctx"),
         "LLM_TEMPERATURE": ("llm", "temperature"),
         "LLM_MAX_TOKENS": ("llm", "max_tokens"),
-        "EMBEDDINGS_BACKEND": ("embeddings", "backend"),
+        "EMBEDDINGS_MODE": ("embeddings", "mode"),
+        "RERANKER_MODE": ("reranker", "mode"),
         "RETRIEVERS_MAX_RESULTS": ("retrievers", "max_results_per_source"),
         "CACHE_DB_PATH": ("cache", "db_path"),
         "CACHE_CHUNK_TTL": ("cache", "chunk_ttl_hours"),
@@ -136,21 +207,25 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         "RERANKER_TOP_K": ("reranker", "top_k"),
         "LOG_LEVEL": ("log", "log_level"),
         "OUTPUT_REPORTS_DIR": ("output", "reports_dir"),
+        "CLOUD_LLM_TIMEOUT": ("llm", "cloud", "timeout"),
     }
 
-    for env_key, (section, field) in env_map.items():
+    for env_key, path_parts in env_map.items():
         value = os.environ.get(env_key)
         if value is not None:
-            section_obj = getattr(config, section)
-            current = getattr(section_obj, field)
+            section = config
+            for part in path_parts[:-1]:
+                section = getattr(section, part)
+            field = path_parts[-1]
+            current = getattr(section, field)
             if isinstance(current, bool):
-                setattr(section_obj, field, value.lower() in ("true", "1", "yes"))
+                setattr(section, field, value.lower() in ("true", "1", "yes"))
             elif isinstance(current, int):
-                setattr(section_obj, field, int(value))
+                setattr(section, field, int(value))
             elif isinstance(current, float):
-                setattr(section_obj, field, float(value))
+                setattr(section, field, float(value))
             else:
-                setattr(section_obj, field, value)
+                setattr(section, field, value)
 
     return config
 
@@ -174,13 +249,43 @@ def load_config(path: Path) -> AppConfig:
         raw = tomllib.load(f)
 
     _config = AppConfig.model_validate(raw)
-    _config = _apply_env_overrides(_config)
+
+    _propagate_api_keys(_config)
 
     for field, value in _config.api_keys.model_dump().items():
         if value:
             os.environ[field.upper()] = value
 
+    _apply_env_overrides(_config)
+
     return _config
+
+
+def _propagate_api_keys(config: AppConfig) -> None:
+    """Populate cloud provider api_key fields from environment variables."""
+
+    provider_env_map = {
+        "nvidia": "NVIDIA_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "huggingface": "HUGGINGFACE_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }
+
+    for provider_name, env_key in provider_env_map.items():
+        provider_cfg = getattr(config.llm.cloud, provider_name, None)
+        if provider_cfg and not provider_cfg.api_key:
+            env_value = os.getenv(env_key)
+            if env_value:
+                provider_cfg.api_key = env_value
+
+    if config.embeddings.cloud and not config.embeddings.cloud.api_key:
+        config.embeddings.cloud.api_key = os.getenv("OPENAI_API_KEY", "")
+
+    if config.reranker.cloud and not config.reranker.cloud.api_key:
+        config.reranker.cloud.api_key = os.getenv("HF_API_KEY", "")
 
 
 def get_config() -> AppConfig:

@@ -7,8 +7,8 @@ from markdownify import markdownify as md
 from readability import Document
 
 from agent.extractors.base import BaseExtractor
-from agent.models.result import ExtractedChunk
 from agent.logger import fmt_ms, log_info, log_warning
+from agent.models.result import ExtractedChunk
 
 
 class ReadabilityExtractor(BaseExtractor):

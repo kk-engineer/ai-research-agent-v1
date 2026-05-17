@@ -4,10 +4,9 @@ from datetime import datetime
 
 from ddgs import DDGS
 
+from agent.logger import fmt_ms, log_info
 from agent.models.result import RawResult
 from agent.retrievers.base import BaseRetriever, with_retry
-from agent.logger import fmt_ms, log_info
-
 
 TEMPORAL_KEYWORDS = {
     "last", "recent", "latest", "this week", "this month", "this year",
@@ -50,7 +49,7 @@ class DuckDuckGoRetriever(BaseRetriever):
     @with_retry()
     async def _search(self, query: str, max_results: int, timelimit: str) -> list[RawResult]:
         t0 = time.perf_counter()
-        current_year = datetime.now().year
+        datetime.now().year
 
         def _run() -> list[RawResult]:
             batch: list[RawResult] = []

@@ -2,8 +2,8 @@ import re
 from datetime import datetime
 
 from agent.config import AppConfig
-from agent.models.query import RouterDecision
 from agent.logger import log_info
+from agent.models.query import RouterDecision
 
 
 class QueryRouter:
