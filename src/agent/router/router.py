@@ -22,6 +22,22 @@ class QueryRouter:
         "product", "launch", "update", "blog", "startup", "funding",
         "acquisition", "interview", "podcast", "tutorial", "demo",
         "github", "open source", "available now",
+        # ADD — learning/exploratory intent
+        "learn", "learning", "project", "projects", "guide", "guides",
+        "example", "examples", "course", "beginner", "introduction",
+        "overview", "suggest", "recommend", "build", "implement",
+        "how to", "howto", "starter", "hands-on", "practice",
+        # ADD — common query patterns that signal "general web search"
+        "now", "today", "current", "currently", "happening", "what",
+        "who", "where", "when", "why", "how", "tell", "show", "find",
+        "top", "best", "list", "india", "world", "global",  # geo/list queries
+    }
+
+    # ADD a new LEARNING_KEYWORDS set for mode override
+    LEARNING_KEYWORDS = {
+        "learn", "learning", "project", "projects", "example", "examples",
+        "tutorial", "guide", "suggest", "recommend", "build", "implement",
+        "practice", "exercise", "starter", "beginner", "hands-on",
     }
 
     TEMPORAL_MAP = {
@@ -31,9 +47,27 @@ class QueryRouter:
         "year": ["this year", "past year", "last year", "12 months"],
     }
 
+    CONVERSATIONAL_PREFIXES = [
+        "what is", "what are", "what's", "who is", "who are",
+        "tell me about", "explain", "describe", "show me",
+        "find me", "give me", "suggest", "how is", "how are",
+        "i want to know", "can you",
+    ]
+
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.llm = create_llm(config)
+
+    def _clean_for_search(self, query: str) -> str:
+        """Strip conversational wrappers; return a search-engine-friendly string."""
+        q = query.strip().rstrip("?.,!").strip()
+        q_lower = q.lower()
+        for prefix in self.CONVERSATIONAL_PREFIXES:
+            if q_lower.startswith(prefix):
+                q = q[len(prefix):].strip()
+                break
+        return q if len(q) > 5 else query  # safety: don't reduce to nothing
+
 
     async def classify(self, query: str) -> RouterDecision:
         heuristic_result, confidence = self._heuristic_classify(query)
@@ -69,6 +103,10 @@ class QueryRouter:
 
         academic_matches = words & self.ACADEMIC_KEYWORDS
         general_matches = words & self.GENERAL_KEYWORDS
+        # Queries asking for projects/examples/tutorials should always hit
+        # general sources (DDG, HN, GitHub) not arXiv.
+        learning_matches = words & self.LEARNING_KEYWORDS
+
 
         academic_count = len(academic_matches)
         general_count = len(general_matches)
@@ -81,12 +119,18 @@ class QueryRouter:
         general_weight = general_count / total
 
         mode: Literal["academic", "general", "hybrid"]
+
         if academic_weight >= 0.7:
             mode = "academic"
         elif general_weight >= 0.7:
             mode = "general"
         else:
             mode = "hybrid"
+
+        if learning_matches and mode != "academic":
+            mode = "general"  # override hybrid → general for project/learning queries
+            general_weight = max(general_weight, 0.7)
+            academic_weight = min(academic_weight, 0.3)
 
         time_window_raw = self._detect_time_window(query)
         valid_tw = ("day", "week", "month", "year", "all")
@@ -121,6 +165,7 @@ class QueryRouter:
             sub_queries = data.get("sub_queries", [query])
             if not sub_queries or not isinstance(sub_queries, list):
                 sub_queries = [query]
+
             raw_mode = data.get("mode", "hybrid")
             mode: Literal["academic", "general", "hybrid"] = cast(
                 Literal["academic", "general", "hybrid"],
@@ -131,6 +176,12 @@ class QueryRouter:
                 Literal["day", "week", "month", "year", "all"],
                 time_window if time_window in valid_tw else "all",
             )
+
+            # ADD: if LLM only returned 1 sub_query (or the original query),
+            # still run _decompose_query as a supplement
+            if len(sub_queries) <= 1 or (len(sub_queries) == 1 and sub_queries[0].lower() == query.lower()):
+                sub_queries = self._decompose_query(query, mode, tw)
+
             return RouterDecision(
                 query=query,
                 mode=mode,
@@ -183,7 +234,8 @@ class QueryRouter:
         )
 
     def _decompose_query(self, query: str, mode: str, time_window: str) -> list[str]:
-        sub = [query]
+        clean = self._clean_for_search(query)  # "India current events"
+        sub = [query, clean] if clean != query else [query]
 
         q = query.lower()
 

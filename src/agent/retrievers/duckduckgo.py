@@ -87,3 +87,55 @@ class DuckDuckGoRetriever(BaseRetriever):
             f"\"{query[:80]}\" → {len(batch)} results timelimit={timelimit} in {fmt_ms(latency)}",
         )
         return batch
+
+
+    async def _fetch_one(
+            self, query: str, max_results: int, time_window: str
+    ) -> list[RawResult]:
+        # Choose search method based on query intent
+        use_news = time_window in ("day", "week", "month") or self._is_news_query(query)
+
+        def _run() -> list[dict]:
+            with DDGS() as ddgs:
+                if use_news:
+                    # news() returns individual article URLs with published dates
+                    return list(ddgs.news(
+                        query,
+                        max_results=max_results,
+                        # timelimit: 'd'=day, 'w'=week, 'm'=month
+                        timelimit={"day": "d", "week": "w", "month": "m"}.get(time_window, "m"),
+                    ))
+                else:
+                    return list(ddgs.text(
+                        query,
+                        max_results=max_results,
+                        timelimit={"year": "y", "month": "m"}.get(time_window),
+                    ))
+
+        results = await asyncio.to_thread(_run)
+
+        raw = []
+        for r in results:
+            # ddgs.news() uses 'url' key; ddgs.text() uses 'href'
+            url = r.get("url") or r.get("href", "")
+            if not url:
+                continue
+            # ddgs.news() returns 'date' as ISO string
+            published_at = None
+            if date_str := r.get("date"):
+                with contextlib.suppress(Exception):
+                    published_at = datetime.fromisoformat(date_str)
+
+            raw.append(RawResult(
+                id=RawResult.make_id(url),
+                title=r.get("title", ""),
+                url=url,
+                snippet=r.get("body", ""),
+                source="duckduckgo",
+                published_at=published_at,  # ← news() provides this; text() does not
+            ))
+        return raw
+
+    def _is_news_query(self, query: str) -> bool:
+        news_signals = {"news", "happening", "latest", "today", "now", "current", "update"}
+        return bool(news_signals & set(query.lower().split()))

@@ -1,5 +1,4 @@
 import asyncio
-import os
 import signal
 from pathlib import Path
 
@@ -23,21 +22,11 @@ app = typer.Typer(
 )
 console = Console()
 
-_shutting_down = False
-
 
 def _setup_signal_handlers():
-    global _shutting_down
-
-    def handle_sigint(signum, frame):
-        global _shutting_down
-        if _shutting_down:
-            console.print("\n[red]Forced exit[/red]")
-            os._exit(1)
-        _shutting_down = True
-        console.print("\n[yellow]Shutting down gracefully...[/yellow]")
-
-    signal.signal(signal.SIGINT, handle_sigint)
+    def _handler(signum, frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGINT, _handler)
 
 
 @app.command()

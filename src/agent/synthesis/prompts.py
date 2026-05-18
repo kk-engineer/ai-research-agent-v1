@@ -99,21 +99,29 @@ def build_synthesis_prompt(
 def build_classification_prompt(query: str) -> str:
     today = datetime.now().strftime("%B %d, %Y")
     return (
-        'Classify the following research query into one of three modes: '
-        '"academic", "general", or "hybrid".\n\n'
-        'Academic queries focus on papers, research, surveys, arXiv, '
-        'journals, conferences.\n'
-        'General queries focus on news, announcements, products, blogs, '
-        'tutorials.\n'
-        'Hybrid queries contain elements of both.\n\n'
-        f'Current date: {today}\n\n'
-        'Respond with ONLY a valid JSON object:\n'
-        '{{\n'
+        "Classify the following research query and generate search sub-queries.\n\n"
+        "Modes:\n"
+        "  academic — papers, arXiv, research, surveys, benchmarks\n"
+        "  general  — news, tutorials, projects, examples, guides, products\n"
+        "  hybrid   — both research and practical/news aspects\n\n"
+        # ADD: explicit sub-query formatting instructions
+        "Sub-query rules:\n"
+        "  - Generate 3 to 4 sub-queries\n"
+        "  - Each sub-query must be 3-7 words max — concise search engine terms\n"
+        "  - Strip filler words like 'suggest', 'good', 'all', 'such as'\n"
+        "  - Extract the CORE CONCEPTS from the query, not the full sentence\n"
+        "  - For learning/project queries: include 'github', 'tutorial', or 'examples'\n"
+        "  - Example: 'suggest projects for learning RAG' → sub_queries:\n"
+        "      ['RAG implementation projects github', 'retrieval augmented generation tutorial',\n"
+        "       'RAG beginner examples python']\n\n"
+        f"Current date: {today}\n\n"
+        "Respond with ONLY valid JSON:\n"
+        "{{\n"
         '    "mode": "academic" | "general" | "hybrid",\n'
         '    "academic_weight": <float 0.0-1.0>,\n'
         '    "general_weight": <float 0.0-1.0>,\n'
-        '    "sub_queries": ["<best sub-query 1>", "<best sub-query 2>", ...],\n'
+        '    "sub_queries": ["3-7 word query 1", "3-7 word query 2", "3-7 word query 3"],\n'
         '    "explanation": "<brief reason>"\n'
-        '}}\n\n'
-        f'Query: {query}'
+        "}}\n\n"
+        f"Query: {query}"
     )

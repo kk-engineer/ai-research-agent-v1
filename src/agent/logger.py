@@ -77,8 +77,8 @@ async def emit(
 
     timestamp = event.timestamp.strftime("%H:%M:%S")
     level_text = Text(f" {level.ljust(7)}", style=log_level_styles[level])
-    module_text = Text(f" {module.ljust(12)}", style="bold blue")
-    message_text = _highlighter(message)
+    module_text = Text(f" {module.ljust(12)}", style="bold magenta")
+    message_text = Text(f" {_highlighter(message)}", style=log_level_styles[level])
 
     log_line = Text.assemble(
         Text(f"[{timestamp}] ", style="dim white"),

@@ -82,6 +82,11 @@ class Pipeline:
         "programming", "language", "compiler", "debugger", "plugin",
         "extension", "middleware", "backend", "frontend", "database", "orm",
         "rest", "graphql", "websocket", "deploy", "devops", "ci/cd",
+        # ADD — agentic AI is inherently code/project territory
+        "agent", "agents", "agentic", "multi-agent", "multiagent",
+        "pattern", "patterns", "workflow", "orchestrate",
+        "langgraph", "langchain", "autogen", "crewai", "smolagents",
+        "reflection", "rag", "tool-use", "tool use",
     }
 
     SOFTWARE_PRIORITY_SOURCES = {"github_search", "github_trending", "hackernews", "reddit"}
@@ -248,7 +253,10 @@ class Pipeline:
 
     async def _filter_by_date(self, results: list[RawResult], mode: str) -> list[RawResult]:
         current_year = datetime.now().year
-        filtered = []
+        filtered = [
+            r for r in results
+            if r.published_at is None or r.published_at.year >= current_year
+        ]
         dropped = 0
         for r in results:
             if r.published_at is not None and r.published_at.year < current_year:

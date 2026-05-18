@@ -17,12 +17,30 @@ class BaseExtractor(ABC):
         ...
 
 
+JS_HEAVY_DOMAINS = {
+    "reuters.com", "bloomberg.com", "ft.com",
+    "wsj.com", "nytimes.com", "washingtonpost.com",
+    "hindustantimes.com", "indianexpress.com", "ndtv.com",
+    "thehindu.com", "timesofindia.com",
+}
+
+
 class ExtractorChain:
     def __init__(self, extractors: list[BaseExtractor]) -> None:
         self.extractors = extractors
 
+    @staticmethod
+    def _needs_jina(url: str) -> bool:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lstrip("www.")
+        return any(domain.endswith(d) for d in JS_HEAVY_DOMAINS)
+
     async def extract(self, url: str, raw_html: str | None = None) -> ExtractedChunk | None:
-        for extractor in self.extractors:
+        chain = self.extractors
+        if self._needs_jina(url):
+            chain = [e for e in self.extractors if e.name != "trafilatura"]
+            await log_debug("extractor", f"JS-heavy domain, skipping trafilatura: {url[:60]}")
+        for extractor in chain:
             try:
                 result = await extractor.extract(url, raw_html)
                 if result is not None and result.word_count >= _MIN_WORDS:
@@ -65,7 +83,11 @@ class ExtractorChain:
         return chunks
 
     async def _extract_with_chain(self, r: RawResult) -> ExtractedChunk | None:
-        for extractor in self.extractors:
+        chain = self.extractors
+        if self._needs_jina(r.url):
+            chain = [e for e in self.extractors if e.name != "trafilatura"]
+            await log_debug("extractor", f"JS-heavy domain, skipping trafilatura: {r.url[:60]}")
+        for extractor in chain:
             try:
                 result = await extractor.extract(r.url, r.raw_html)
                 if result is not None and result.word_count >= _MIN_WORDS:

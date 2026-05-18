@@ -1,5 +1,4 @@
 import asyncio
-import os
 import signal
 import sys
 from pathlib import Path
@@ -17,21 +16,11 @@ from agent.startup import validate_connectivity
 
 console = Console()
 
-_shutdown_flag = False
-
 
 def _setup_signal_handlers():
-    global _shutdown_flag
-
-    def handle_sigint(signum, frame):
-        global _shutdown_flag
-        if _shutdown_flag:
-            console.print("\n[red]Forced exit[/red]")
-            os._exit(1)
-        _shutdown_flag = True
-        console.print("\n[yellow]Shutting down gracefully...[/yellow]")
-
-    signal.signal(signal.SIGINT, handle_sigint)
+    def _handler(signum, frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGINT, _handler)
 
 
 class InteractiveShell:
@@ -161,53 +150,54 @@ class InteractiveShell:
         await self._initialize()
         self._show_banner()
 
-        while not self._shutdown and not _shutdown_flag:
-            try:
-                raw = input(">>> ").strip()
-            except EOFError:
-                console.print("\nExiting...")
-                break
-
-            if not raw:
-                continue
-
-            if raw.startswith("/"):
-                cmd = raw[1:].lower()
-                if cmd == "exit":
-                    console.print("Exiting...")
+        try:
+            while not self._shutdown:
+                try:
+                    raw = input(">>> ").strip()
+                except EOFError:
+                    console.print("\nExiting...")
                     break
-                elif cmd == "help":
-                    self._show_help()
-                elif cmd == "clear":
-                    await self._clear_cache()
-                elif cmd == "stats":
-                    await self._cache_stats()
-                elif cmd == "config":
-                    await self._show_config()
-                else:
-                    console.print(f"  [yellow]⚠ Unknown command:[/yellow] {cmd}")
-                continue
 
-            no_cache = False
-            export_json = False
+                if not raw:
+                    continue
 
-            if raw.startswith("--no-cache "):
-                raw = raw[11:]
-                no_cache = True
-            if raw.startswith("--export-json "):
-                raw = raw[16:]
-                export_json = True
+                if raw.startswith("/"):
+                    cmd = raw[1:].lower()
+                    if cmd == "exit":
+                        console.print("Exiting...")
+                        break
+                    elif cmd == "help":
+                        self._show_help()
+                    elif cmd == "clear":
+                        await self._clear_cache()
+                    elif cmd == "stats":
+                        await self._cache_stats()
+                    elif cmd == "config":
+                        await self._show_config()
+                    else:
+                        console.print(f"  [yellow]⚠ Unknown command:[/yellow] {cmd}")
+                    continue
 
-            try:
-                await self._run_pipeline(raw, no_cache=no_cache, export_json=export_json)
-            except asyncio.CancelledError:
-                console.print("\nOperation cancelled.")
-                break
-            except Exception as e:
-                console.print(f"  [red]Error: {e}[/red]")
+                no_cache = False
+                export_json = False
 
-        if self.file_logger:
-            await self.file_logger.stop()
+                if raw.startswith("--no-cache "):
+                    raw = raw[11:]
+                    no_cache = True
+                if raw.startswith("--export-json "):
+                    raw = raw[16:]
+                    export_json = True
+
+                try:
+                    await self._run_pipeline(raw, no_cache=no_cache, export_json=export_json)
+                except asyncio.CancelledError:
+                    console.print("\nOperation cancelled.")
+                    break
+                except Exception as e:
+                    console.print(f"  [red]Error: {e}[/red]")
+        finally:
+            if self.file_logger:
+                await self.file_logger.stop()
 
 
 def main():

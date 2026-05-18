@@ -3,6 +3,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+import tiktoken
+
 from agent.config import AppConfig
 from agent.llm.base import BaseLLM
 from agent.logger import fmt_ms, log_debug, log_info, log_success
@@ -72,19 +74,19 @@ class Synthesizer:
         await log_info("llm", "=== END SOURCE BLOCKS ===")
 
         full_text = ""
-        token_count = 0
+        stream_count = 0
         batch: list[str] = []
 
         async for token in self.llm.stream(user_prompt, system=system_prompt):
             full_text += token
-            token_count += 1
+            stream_count += 1
             batch.append(token)
             if len(batch) >= 100:
                 preview = full_text.replace("\n", " ")
                 await log_debug(
                     "llm",
-                    f"LLM response ({token_count} tokens): {preview}",
-                    data={"tokens": token_count, "partial_response": full_text},
+                    f"LLM response ({stream_count} chunks): {preview}",
+                    data={"chunks": stream_count, "partial_response": full_text},
                 )
                 batch.clear()
 
@@ -92,9 +94,12 @@ class Synthesizer:
             preview = full_text.replace("\n", " ")
             await log_debug(
                 "llm",
-                f"LLM response final ({token_count} tokens): {preview}",
-                data={"tokens": token_count, "partial_response": full_text},
+                f"LLM response final ({stream_count} chunks): {preview}",
+                data={"chunks": stream_count, "partial_response": full_text},
             )
+
+        enc = tiktoken.get_encoding("cl100k_base")
+        token_count = len(enc.encode(full_text))
 
         citations = self._parse_citations(full_text, truncated)
         synthesis_latency = (time.perf_counter() - t0)
@@ -116,7 +121,7 @@ class Synthesizer:
             query=query.raw,
             mode=decision.mode,
             generated_at=datetime.now(),
-            markdown=full_text,
+            markdown=f"**Query:** {query.raw}\n\n{full_text}",
             citations=citations,
             stats=stats,
         )
