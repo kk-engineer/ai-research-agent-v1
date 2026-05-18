@@ -47,31 +47,20 @@ class ExtractorChain:
 
         for r in results:
             chunk: ExtractedChunk | None = None
-            if r.source in _SNIPPET_SOURCES and len(r.snippet) >= 80:
-                chunk = ExtractedChunk(
-                    chunk_id=uuid4().hex,
-                    source_id=r.id,
-                    url=r.url,
-                    title=r.title,
-                    content_markdown=r.snippet,
-                    word_count=len(r.snippet.split()),
-                    extractor_used="snippet",
-                    extraction_latency_ms=0.0,
-                    metadata={
-                        "authors": r.authors,
-                        "categories": r.categories,
-                        "published_at": r.published_at.isoformat() if r.published_at else None,
-                        "source": r.source,
-                    },
-                )
-                chunks.append(chunk)
-                await log_debug("extractor", f"snippet fast-path: {r.url[:60]}")
-                continue
 
-            async with semaphore:
-                extracted = await self._extract_with_chain(r)
-                if extracted:
-                    chunks.append(extracted)
+            if r.source in _SNIPPET_SOURCES and len(r.snippet) >= 80:
+                chunk = self._make_snippet_chunk(r)
+                await log_debug("extractor", f"snippet fast-path: {r.url[:60]}")
+            else:
+                async with semaphore:
+                    chunk = await self._extract_with_chain(r)
+
+            if chunk is None and r.snippet:
+                chunk = self._make_snippet_chunk(r)
+                await log_debug("extractor", f"snippet fallback: {r.url[:60]}")
+
+            if chunk:
+                chunks.append(chunk)
 
         return chunks
 
@@ -91,3 +80,22 @@ class ExtractorChain:
                 continue
         await log_warning("extractor", f"No usable content for {r.url[:70]}")
         return None
+
+    @staticmethod
+    def _make_snippet_chunk(r: RawResult) -> ExtractedChunk:
+        return ExtractedChunk(
+            chunk_id=uuid4().hex,
+            source_id=r.id,
+            url=r.url,
+            title=r.title,
+            content_markdown=r.snippet,
+            word_count=len(r.snippet.split()),
+            extractor_used="snippet",
+            extraction_latency_ms=0.0,
+            metadata={
+                "authors": r.authors,
+                "categories": r.categories,
+                "published_at": r.published_at.isoformat() if r.published_at else None,
+                "source": r.source,
+            },
+        )

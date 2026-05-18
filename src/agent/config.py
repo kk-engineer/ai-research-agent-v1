@@ -107,11 +107,17 @@ class EmbeddingCloudConfig(BaseModel):
 
 
 class EmbeddingsConfig(BaseModel):
-    mode: str = Field(default="local", description='"local" | "cloud"')
+    mode: str = Field(
+        default="local", description='"local" | "cloud" | "huggingface"'
+    )
     base_url: str = Field(
         default="http://localhost:8001/v1", description="Embedding server base URL"
     )
     model: str = Field(default="nomic-embed-text-v1.5", description="Embedding model name")
+    hf_model: str = Field(
+        default="BAAI/bge-large-en-v1.5",
+        description="HuggingFace model name for SentenceTransformer embeddings",
+    )
     cloud: EmbeddingCloudConfig = Field(default_factory=EmbeddingCloudConfig)
 
 
@@ -179,11 +185,28 @@ class RerankerCloudConfig(BaseModel):
     ))
 
 
+class SynthesisConfig(BaseModel):
+    max_chunk_chars: int = Field(
+        default=4000,
+        ge=500,
+        description="Max characters per source chunk in the LLM prompt",
+    )
+
+
 class RerankerConfig(BaseModel):
-    mode: str = Field(default="local", description='"local" | "cloud"')
+    mode: str = Field(
+        default="local", description='"local" | "cloud" | "huggingface"'
+    )
+    enabled: bool = Field(
+        default=True, description="When false, skip reranking and pass all chunks to LLM"
+    )
     top_k: int = Field(default=20, description="Number of chunks to keep after reranking")
     base_url: str = Field(default="", description="Reranker API base URL")
     model: str = Field(default="", description="Reranker model name or path")
+    hf_model: str = Field(
+        default="BAAI/bge-reranker-large",
+        description="HuggingFace model name for CrossEncoder reranker",
+    )
     weights: RerankerWeightsConfig = Field(default_factory=RerankerWeightsConfig)
     cloud: RerankerCloudConfig = Field(default_factory=RerankerCloudConfig)
 
@@ -225,6 +248,7 @@ class AppConfig(BaseModel):
     retrievers: RetrieverConfig = Field(default_factory=RetrieverConfig)
     extractors: ExtractorConfig = Field(default_factory=ExtractorConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
+    synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     timeouts: TimeoutConfig = Field(default_factory=TimeoutConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)

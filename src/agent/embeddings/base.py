@@ -19,6 +19,11 @@ def create_embeddings(config: AppConfig) -> BaseEmbedder:
 
         return CloudEmbedder(config)
 
+    if config.embeddings.mode == "huggingface":
+        from agent.embeddings.sentence_transformer import SentenceTransformerEmbedder
+
+        return SentenceTransformerEmbedder(config.embeddings.hf_model)
+
     from agent.embeddings.server import ServerEmbedder
 
     return ServerEmbedder(config.embeddings.base_url, config.embeddings.model)

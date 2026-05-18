@@ -16,9 +16,17 @@ AUTHORITY_SCORES: dict[str, float] = {
 }
 
 
-def freshness_score(published_at: datetime | None) -> float:
+def freshness_score(published_at: datetime | str | None) -> float:
     if published_at is None:
         return 0.5
+    if isinstance(published_at, str):
+        try:
+            dt = datetime.fromisoformat(published_at)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            published_at = dt
+        except Exception:
+            return 0.5
     now = datetime.now(UTC)
     days_old = (now - published_at).days
     return 1.0 / (1.0 + days_old / 30.0)

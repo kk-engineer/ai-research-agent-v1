@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from agent.config import AppConfig
+from agent.hf_cache import ensure_hf_cache
 from agent.logger import fmt_ms, log_info
 from agent.models.result import ExtractedChunk, ScoredChunk
 from agent.reranker.base import BaseReranker
@@ -42,11 +43,13 @@ class CrossEncoderReranker(BaseReranker):
         if self._model is not None:
             return self._model
 
+        raw_name = self.config.reranker.hf_model or "BAAI/bge-reranker-large"
+        model_name = _resolve_model_name(raw_name)
+        ensure_hf_cache([model_name])
+
         def _load() -> Any:
             from sentence_transformers import CrossEncoder
 
-            raw_name = self.config.reranker.model or "cross-encoder/ms-marco-MiniLM-L-6-v2"
-            model_name = _resolve_model_name(raw_name)
             model = CrossEncoder(
                 model_name,
                 device=self._device,

@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import UTC, datetime
 
 import httpx
 
@@ -49,6 +50,18 @@ class HackerNewsRetriever(BaseRetriever):
             return None
         return int(time.time() - seconds)
 
+    @staticmethod
+    def _parse_date(date_str: str | None) -> datetime | None:
+        if not date_str:
+            return None
+        try:
+            dt = datetime.fromisoformat(date_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+        except Exception:
+            return None
+
     @with_retry()
     async def _search(
         self, client: httpx.AsyncClient, query: str, max_results: int, cutoff: int | None
@@ -71,7 +84,7 @@ class HackerNewsRetriever(BaseRetriever):
         for hit in data.get("hits", []):
             object_id = hit.get("objectID", "")
             url = hit.get("url") or f"https://news.ycombinator.com/item?id={object_id}"
-            created_at = hit.get("created_at", None)
+            published_at = HackerNewsRetriever._parse_date(hit.get("created_at"))
             results.append(
                 RawResult(
                     id=RawResult.make_id(url),
@@ -79,7 +92,7 @@ class HackerNewsRetriever(BaseRetriever):
                     url=url,
                     snippet=hit.get("title", ""),
                     source="hackernews",
-                    published_at=created_at,
+                    published_at=published_at,
                     authors=[hit.get("author", "")] if hit.get("author") else [],
                     categories=[],
                 )

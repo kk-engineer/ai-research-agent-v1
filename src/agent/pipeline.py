@@ -15,7 +15,7 @@ from agent.llm import create_llm
 from agent.logger import fmt_ms, log_error, log_info, log_success
 from agent.models.query import RouterDecision, UserQuery
 from agent.models.report import PipelineStats, ResearchReport
-from agent.models.result import RawResult
+from agent.models.result import RawResult, ScoredChunk
 from agent.reranker import create_reranker
 from agent.retrievers import (
     ArxivRetriever,
@@ -172,9 +172,17 @@ class Pipeline:
             f"Extraction done: {len(all_chunks)} chunks ({len(cache_hits)} cached)",
         )
 
-        t_rerank = time.perf_counter()
-        scored = await self.reranker.rank(all_chunks, query.raw, self.config.reranker.top_k)
-        rerank_latency = (time.perf_counter() - t_rerank)
+        if self.config.reranker.enabled:
+            t_rerank = time.perf_counter()
+            scored = await self.reranker.rank(all_chunks, query.raw, self.config.reranker.top_k)
+            rerank_latency = (time.perf_counter() - t_rerank)
+        else:
+            scored = [ScoredChunk(**c.model_dump()) for c in all_chunks]
+            rerank_latency = 0.0
+            await log_info(
+                "pipeline",
+                f"Reranker disabled — passing all {len(scored)} chunks to synthesis",
+            )
 
         report = await self.synthesizer.run(query, decision, scored)
 

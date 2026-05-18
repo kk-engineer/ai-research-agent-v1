@@ -60,6 +60,7 @@ def build_synthesis_prompt(
     sub_queries: list[str],
     chunks: list[ScoredChunk],
     max_chunks: int,
+    max_chunk_chars: int = 4000,
 ) -> str:
     today = datetime.now().strftime("%B %d, %Y")
 
@@ -72,7 +73,7 @@ def build_synthesis_prompt(
             f"Source: {chunk.metadata.get('source', 'unknown')}\n"
             f"Date: {chunk.metadata.get('published_at', 'unknown')}\n"
             f"---\n"
-            f"{chunk.content_markdown[:2000]}\n"
+            f"{chunk.content_markdown[:max_chunk_chars]}\n"
             f"{'='*40}\n"
         )
         source_blocks.append(block)

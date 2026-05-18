@@ -48,6 +48,7 @@ class Synthesizer:
             sub_queries=decision.sub_queries,
             chunks=truncated,
             max_chunks=len(truncated),
+            max_chunk_chars=self.config.synthesis.max_chunk_chars,
         )
 
         await log_info(

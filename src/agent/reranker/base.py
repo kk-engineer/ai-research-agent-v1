@@ -21,6 +21,11 @@ def create_reranker(config: AppConfig) -> BaseReranker:
 
         return CloudReranker(config)
 
+    if config.reranker.mode == "huggingface":
+        from agent.reranker.cross_encoder import CrossEncoderReranker
+
+        return CrossEncoderReranker(config)
+
     from agent.reranker.server import ServerReranker
 
     return ServerReranker(config)
